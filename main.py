@@ -23,7 +23,7 @@ def run_nicegui():
     print("🌐 Powered by NiceGUI (Web-based interface)")
     print("🎨 Hi-Tech Design: Sharp corners, shadows, cyber colors")
     print("🚀 Smooth performance, no lag")
-    print("📍 Opening at http://localhost:8080")
+    print("📍 Opening in browser (random port)")
     print("=" * 70)
     print()
 

@@ -823,7 +823,7 @@ def main():
     app_instance.build_ui()
     ui.run(
         title='Browser Automator Pro v5.0',
-        port=8080,
+        port=0,  # Random available port
         reload=False,
         show=True,
         dark=True
