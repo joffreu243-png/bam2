@@ -1,0 +1,1889 @@
+# SMART PROVIDER WITH OCTOBROWSER API + PROXY + FALLBACKS
+"""
+Provider: smart_no_api
+Генератор скриптов с Octobrowser API, обязательными прокси и умными альтернативами
+"""
+
+import json
+from typing import Dict, List
+
+
+class Generator:
+    """Генератор для Playwright через Octobrowser API с прокси"""
+
+    def generate_script(self, user_code: str, config: Dict) -> str:
+        """
+        Генерирует Playwright скрипт с Octobrowser API + прокси + многопоточность
+
+        Args:
+            user_code: Код автоматизации из Playwright recorder
+            config: Конфигурация (API token, proxy, profile settings, threads_count, proxy_list)
+
+        Returns:
+            Полный исполняемый Python скрипт
+        """
+        api_token = config.get('api_token', '')
+        proxy_config = config.get('proxy', {})
+        proxy_list_config = config.get('proxy_list', {})  # 🔥 СПИСОК ПРОКСИ
+        profile_config = config.get('profile', {})
+        threads_count = config.get('threads_count', 1)  # 🔥 МНОГОПОТОЧНОСТЬ
+        network_capture_patterns = config.get('network_capture_patterns', [])  # 🌐 ПАТТЕРНЫ ДЛЯ ЗАХВАТА NETWORK RESPONSES
+
+        # 🔥 СИМУЛЯЦИЯ ВВОДА ТЕКСТА
+        self.simulate_typing = config.get('simulate_typing', True)
+        self.typing_delay = config.get('typing_delay', 100)
+
+        script = self._generate_imports()
+        script += self._generate_config(api_token, proxy_config, proxy_list_config, threads_count)
+        script += self._generate_proxy_rotation()  # 🔥 ФУНКЦИЯ РОТАЦИИ ПРОКСИ
+        script += self._generate_octobrowser_functions(profile_config)  # Убрал proxy_config - теперь прокси выбирается динамически
+        script += self._generate_helpers()
+        script += self._generate_csv_loader()
+        script += self._generate_main_iteration(user_code, network_capture_patterns)  # 🌐 Передаем паттерны
+        script += self._generate_worker_function()  # 🔥 WORKER ФУНКЦИЯ ДЛЯ ПОТОКОВ
+        script += self._generate_main_function()  # 🔥 ОБНОВЛЕННАЯ MAIN С МНОГОПОТОЧНОСТЬЮ
+
+        return script
+
+    def _generate_imports(self) -> str:
+        return '''#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Автоматически сгенерированный скрипт
+Provider: smart_no_api (OCTOBROWSER API + PROXY + FALLBACKS + MULTITHREADING)
+"""
+
+import csv
+import time
+import requests
+import threading
+import random
+import re
+import os
+from tkinter import Tk, filedialog
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from playwright.sync_api import sync_playwright, expect, TimeoutError as PlaywrightTimeout
+from typing import Dict, List, Optional
+
+'''
+
+    def _generate_config(self, api_token: str, proxy_config: Dict, proxy_list_config: Dict, threads_count: int) -> str:
+        config = f'''# ============================================================
+# КОНФИГУРАЦИЯ
+# ============================================================
+
+# Octobrowser API
+API_BASE_URL = "https://app.octobrowser.net/api/v2/automation"
+API_TOKEN = "{api_token}"
+LOCAL_API_URL = "http://localhost:58888/api"
+
+'''
+
+        # 🔥 МНОГОПОТОЧНОСТЬ
+        config += f'''# Многопоточность
+THREADS_COUNT = {threads_count}  # Количество параллельных потоков
+
+'''
+
+        # 🔥 ПРОКСИ КОНФИГУРАЦИЯ
+        proxies_list = proxy_list_config.get('proxies', [])
+        rotation_mode = proxy_list_config.get('rotation_mode', 'random')
+        use_proxy_list = len(proxies_list) > 0
+
+        if use_proxy_list:
+            # Используем список прокси с ротацией
+            config += f'''# Прокси список с ротацией
+USE_PROXY_LIST = True
+PROXY_LIST = {json.dumps(proxies_list, ensure_ascii=False, indent=2)}
+PROXY_ROTATION_MODE = "{rotation_mode}"  # random, round-robin, sticky
+
+'''
+        else:
+            # Используем одиночный прокси (старый формат)
+            proxy_enabled = proxy_config.get('enabled', False)
+            config += f'''# Прокси (одиночный)
+USE_PROXY_LIST = False
+USE_PROXY = {proxy_enabled}
+'''
+
+            if proxy_enabled:
+                config += f'''PROXY_TYPE = "{proxy_config.get('type', 'http')}"
+PROXY_HOST = "{proxy_config.get('host', '')}"
+PROXY_PORT = "{proxy_config.get('port', '')}"
+PROXY_LOGIN = "{proxy_config.get('login', '')}"
+PROXY_PASSWORD = "{proxy_config.get('password', '')}"
+'''
+
+        config += '''
+# Таймауты (оптимизированы для быстрого fail-over при неправильном флоу)
+DEFAULT_TIMEOUT = 10000  # 10 секунд (было 30s, уменьшено для быстрых фейлов)
+NAVIGATION_TIMEOUT = 60000  # 60 секунд
+
+# Thread-safe счетчик для round-robin
+_proxy_counter = 0
+_proxy_lock = threading.Lock()
+
+'''
+        return config
+
+    def _generate_proxy_rotation(self) -> str:
+        """Генерирует функции ротации прокси"""
+        return '''# ============================================================
+# ПРОКСИ РОТАЦИЯ
+# ============================================================
+
+def parse_proxy_string(proxy_string: str) -> Optional[Dict]:
+    """
+    Парсинг прокси строки в компоненты
+
+    Форматы:
+    - type://login:password@host:port
+    - type://host:port
+    - host:port (по умолчанию http)
+    - host:port:login:password
+
+    Returns:
+        Dict с полями: type, host, port, login, password
+    """
+    try:
+        proxy_string = proxy_string.strip()
+
+        # type://login:password@host:port
+        match = re.match(r'^(https?|socks5)://([^:]+):([^@]+)@([^:]+):(\d+)$', proxy_string)
+        if match:
+            return {
+                'type': match.group(1),
+                'login': match.group(2),
+                'password': match.group(3),
+                'host': match.group(4),
+                'port': match.group(5)
+            }
+
+        # type://host:port
+        match = re.match(r'^(https?|socks5)://([^:]+):(\d+)$', proxy_string)
+        if match:
+            return {
+                'type': match.group(1),
+                'host': match.group(2),
+                'port': match.group(3),
+                'login': '',
+                'password': ''
+            }
+
+        # host:port:login:password
+        match = re.match(r'^([^:]+):(\d+):([^:]+):([^:]+)$', proxy_string)
+        if match:
+            return {
+                'type': 'http',
+                'host': match.group(1),
+                'port': match.group(2),
+                'login': match.group(3),
+                'password': match.group(4)
+            }
+
+        # host:port (без типа)
+        match = re.match(r'^([^:]+):(\d+)$', proxy_string)
+        if match:
+            return {
+                'type': 'http',
+                'host': match.group(1),
+                'port': match.group(2),
+                'login': '',
+                'password': ''
+            }
+
+        print(f"[PROXY] [WARNING] Не удалось распарсить: {proxy_string}")
+        return None
+
+    except Exception as e:
+        print(f"[PROXY] [ERROR] Ошибка парсинга: {e}")
+        return None
+
+
+def get_proxy_for_thread(thread_id: int, iteration_number: int) -> Optional[Dict]:
+    """
+    Получить прокси для потока согласно режиму ротации
+
+    Args:
+        thread_id: ID потока
+        iteration_number: Номер итерации
+
+    Returns:
+        Dict с прокси или None
+    """
+    global _proxy_counter
+
+    if not USE_PROXY_LIST:
+        # Используем одиночный прокси (старый формат)
+        if not USE_PROXY:
+            return None
+        return {
+            'type': PROXY_TYPE,
+            'host': PROXY_HOST,
+            'port': PROXY_PORT,
+            'login': PROXY_LOGIN,
+            'password': PROXY_PASSWORD
+        }
+
+    if not PROXY_LIST or len(PROXY_LIST) == 0:
+        print("[PROXY] [WARNING] Список прокси пуст!")
+        return None
+
+    proxy_string = None
+
+    if PROXY_ROTATION_MODE == 'random':
+        # Random: случайный прокси для каждой итерации
+        proxy_string = random.choice(PROXY_LIST)
+        print(f"[PROXY] [RANDOM] Thread {thread_id}, Iteration {iteration_number}: выбран случайный прокси")
+
+    elif PROXY_ROTATION_MODE == 'round-robin':
+        # Round-robin: последовательная ротация (thread-safe)
+        with _proxy_lock:
+            index = _proxy_counter % len(PROXY_LIST)
+            proxy_string = PROXY_LIST[index]
+            _proxy_counter += 1
+        print(f"[PROXY] [ROUND-ROBIN] Thread {thread_id}, Iteration {iteration_number}: прокси #{index + 1}/{len(PROXY_LIST)}")
+
+    elif PROXY_ROTATION_MODE == 'sticky':
+        # Sticky: каждый поток использует свой прокси
+        index = thread_id % len(PROXY_LIST)
+        proxy_string = PROXY_LIST[index]
+        print(f"[PROXY] [STICKY] Thread {thread_id}: закреплен за прокси #{index + 1}")
+
+    else:
+        print(f"[PROXY] [ERROR] Неизвестный режим ротации: {PROXY_ROTATION_MODE}")
+        proxy_string = PROXY_LIST[0]
+
+    # Парсинг прокси строки
+    proxy_dict = parse_proxy_string(proxy_string)
+    if proxy_dict:
+        print(f"[PROXY] [OK] {proxy_dict['type']}://{proxy_dict['host']}:{proxy_dict['port']}")
+    else:
+        print(f"[PROXY] [ERROR] Не удалось распарсить прокси: {proxy_string}")
+
+    return proxy_dict
+
+
+'''
+
+    def _generate_octobrowser_functions(self, profile_config: Dict) -> str:
+        """Генерирует функции Octobrowser API с поддержкой динамических прокси"""
+        if not profile_config:
+            profile_config = {}
+
+        fingerprint = profile_config.get('fingerprint') or {"os": "win"}
+        tags = profile_config.get('tags', [])
+        geolocation = profile_config.get('geolocation')
+
+        fingerprint_json = json.dumps(fingerprint, ensure_ascii=False)
+        tags_json = json.dumps(tags, ensure_ascii=False)
+        geolocation_json = json.dumps(geolocation, ensure_ascii=False) if geolocation else 'None'
+
+        return f'''# ============================================================
+# OCTOBROWSER API ФУНКЦИИ
+# ============================================================
+
+def create_profile(title: str = "Auto Profile", proxy_dict: Optional[Dict] = None) -> Optional[str]:
+    """
+    Создать профиль через Octobrowser API с прокси
+
+    Args:
+        title: Название профиля
+        proxy_dict: Dict с прокси параметрами (type, host, port, login, password)
+    """
+    url = f"{{API_BASE_URL}}/profiles"
+    headers = {{"X-Octo-Api-Token": API_TOKEN}}
+
+    profile_data = {{
+        "title": title,
+        "fingerprint": {fingerprint_json},
+        "tags": {tags_json}
+    }}
+
+    # Добавление прокси если передан
+    if proxy_dict:
+        profile_data["proxy"] = {{
+            "type": proxy_dict.get('type', 'http'),
+            "host": proxy_dict['host'],
+            "port": proxy_dict['port'],
+            "login": proxy_dict.get('login', ''),
+            "password": proxy_dict.get('password', '')
+        }}
+        print(f"[PROFILE] [!] ПРОКСИ: {{proxy_dict['type']}}://{{proxy_dict['host']}}:{{proxy_dict['port']}}")
+
+    if {geolocation_json}:
+        profile_data['geolocation'] = {geolocation_json}
+
+    # Retry logic для rate limits и timeouts
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            print(f"[PROFILE] Отправка запроса на создание профиля (timeout=60s)...")
+            response = requests.post(url, headers=headers, json=profile_data, timeout=60)
+            print(f"[PROFILE] API Response Status: {{response.status_code}}")
+
+            if response.status_code == 429:
+                # Rate limit - retry with exponential backoff
+                wait_time = 2 ** attempt * 5  # 5s, 10s, 20s
+                print(f"[PROFILE] [!] Rate limit hit, waiting {{wait_time}}s before retry {{attempt+1}}/{{max_retries}}")
+                time.sleep(wait_time)
+                continue
+
+            print(f"[PROFILE] API Response: {{response.text[:500]}}")
+
+            if response.status_code in [200, 201]:
+                result = response.json()
+                if result.get('success') and 'data' in result:
+                    profile_uuid = result['data']['uuid']
+                    print(f"[PROFILE] [OK] Профиль создан: {{profile_uuid}}")
+                    return profile_uuid
+                else:
+                    print(f"[PROFILE] [ERROR] Неожиданный формат ответа: {{result}}")
+                    return None
+            else:
+                print(f"[PROFILE] [ERROR] Ошибка API: {{response.status_code}} - {{response.text}}")
+                return None
+        except requests.exceptions.Timeout:
+            print(f"[PROFILE] [ERROR] Timeout при создании профиля (60s)")
+            print(f"[PROFILE] [!] API не ответил вовремя, попытка {{attempt+1}}/{{max_retries}}")
+            if attempt < max_retries - 1:
+                wait_time = 5
+                print(f"[PROFILE] Ожидание {{wait_time}}s перед повторной попыткой...")
+                time.sleep(wait_time)
+                continue
+            else:
+                print(f"[PROFILE] [ERROR] Все попытки исчерпаны")
+                return None
+        except (requests.exceptions.ConnectionError, ConnectionResetError) as e:
+            print(f"[PROFILE] [ERROR] Соединение разорвано: {{str(e)[:100]}}")
+            print(f"[PROFILE] [!] Возможные причины: прокси, перегрузка API, попытка {{attempt+1}}/{{max_retries}}")
+            if attempt < max_retries - 1:
+                wait_time = (attempt + 1) * 3  # 3s, 6s, 9s
+                print(f"[PROFILE] Ожидание {{wait_time}}s перед повторной попыткой...")
+                time.sleep(wait_time)
+                continue
+            else:
+                print(f"[PROFILE] [ERROR] Все попытки исчерпаны после разрыва соединения")
+                return None
+        except Exception as e:
+            print(f"[PROFILE] [ERROR] Exception при создании: {{e}}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    print(f"[PROFILE] [ERROR] Превышено число попыток создания профиля")
+    return None
+
+
+def check_local_api() -> bool:
+    """Проверить доступность локального Octobrowser API"""
+    try:
+        print("[LOCAL_API] Проверка доступности локального Octobrowser...")
+        response = requests.get(f"{{LOCAL_API_URL}}/profiles", timeout=5)
+        if response.status_code in [200, 404]:  # 404 тоже OK - значит API работает
+            print(f"[LOCAL_API] [OK] Локальный Octobrowser доступен на {{LOCAL_API_URL}}")
+            return True
+        else:
+            print(f"[LOCAL_API] [ERROR] Неожиданный статус: {{response.status_code}}")
+            return False
+    except requests.exceptions.ConnectionError:
+        print(f"[LOCAL_API] [ERROR] Не удалось подключиться к {{LOCAL_API_URL}}")
+        print("[LOCAL_API] [!] Убедитесь, что Octobrowser запущен локально")
+        return False
+    except Exception as e:
+        print(f"[LOCAL_API] [ERROR] Ошибка проверки: {{e}}")
+        return False
+
+
+def start_profile(profile_uuid: str) -> Optional[Dict]:
+    """Запустить профиль и получить CDP endpoint"""
+    url = f"{{LOCAL_API_URL}}/profiles/start"
+
+    # Retry logic для синхронизации профиля с локальным Octobrowser
+    max_retries = 8
+    for attempt in range(max_retries):
+        try:
+            if attempt > 0:
+                wait_time = 2 ** (attempt - 1) * 2  # 0s, 2s, 4s, 8s, 16s
+                print(f"[PROFILE] Ожидание синхронизации профиля: {{wait_time}}s")
+                time.sleep(wait_time)
+
+            print(f"[PROFILE] Попытка запуска {{attempt+1}}/{{max_retries}}: {{profile_uuid}}")
+
+            # ============================================================
+            # ⚠️ КРИТИЧЕСКИ ВАЖНО: ЕДИНСТВЕННО ПРАВИЛЬНЫЙ СПОСОБ ЗАПУСКА ПРОФИЛЯ!
+            # ============================================================
+            # Метод: POST (НЕ GET!)
+            # URL: /profiles/start (НЕ /profiles/{{uuid}}/start!)
+            # Body: JSON с uuid и параметрами
+            #
+            # ❌ НЕПРАВИЛЬНО: GET /profiles/{{uuid}}/start
+            # ✅ ПРАВИЛЬНО: POST /profiles/start с body
+            #
+            # Это ПРОТЕСТИРОВАННЫЙ И РАБОТАЮЩИЙ способ!
+            # Все остальные варианты НЕ работают и вызывают 404!
+            # Используйте ТОЛЬКО этот пример во всех будущих провайдерах!
+            # ============================================================
+            response = requests.post(
+                url,
+                json={{
+                    "uuid": profile_uuid,
+                    "debug_port": True,
+                    "headless": False,
+                    "only_local": True,
+                    "timeout": 120
+                }},
+                timeout=120
+            )
+            print(f"[PROFILE] Start Response Status: {{response.status_code}}")
+
+            if response.status_code == 200:
+                data = response.json()
+                print(f"[PROFILE] [OK] Профиль запущен, CDP endpoint получен")
+                return data
+            elif response.status_code == 404:
+                # Profile not synced yet - retry
+                print(f"[PROFILE] [!] Профиль еще не синхронизирован с локальным Octobrowser")
+                continue
+            else:
+                print(f"[PROFILE] [ERROR] Ошибка запуска: {{response.status_code}} - {{response.text}}")
+                return None
+        except Exception as e:
+            print(f"[PROFILE] [ERROR] Exception при запуске: {{e}}")
+            if attempt == max_retries - 1:
+                import traceback
+                traceback.print_exc()
+            continue
+
+    print(f"[PROFILE] [ERROR] Не удалось запустить профиль после {{max_retries}} попыток")
+    print(f"[PROFILE] [!] Убедитесь что Octobrowser запущен локально (http://localhost:58888)")
+    return None
+
+
+def stop_profile(profile_uuid: str):
+    """Остановить профиль"""
+    url = f"{{LOCAL_API_URL}}/profiles/{{profile_uuid}}/stop"
+    try:
+        requests.get(url, timeout=10)
+        print(f"[PROFILE] [OK] Профиль остановлен")
+    except Exception as e:
+        print(f"[PROFILE] [!] Не удалось остановить: {{e}}")
+
+
+def delete_profile(profile_uuid: str):
+    """Удалить профиль"""
+    url = f"{{API_BASE_URL}}/profiles/{{profile_uuid}}"
+    headers = {{"X-Octo-Api-Token": API_TOKEN}}
+    try:
+        requests.delete(url, headers=headers, timeout=10)
+        print(f"[PROFILE] [OK] Профиль удалён")
+    except Exception as e:
+        print(f"[PROFILE] [!] Не удалось удалить: {{e}}")
+
+
+'''
+
+    def _generate_helpers(self) -> str:
+        return '''# ============================================================
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# ============================================================
+
+def smart_click(page, selectors_list, name="element", timeout=10000):
+    """
+    Умный клик с альтернативными селекторами
+
+    Args:
+        page: Playwright page
+        selectors_list: Список альтернативных селекторов
+        name: Название элемента для логов
+        timeout: Таймаут в миллисекундах
+    """
+    for i, selector in enumerate(selectors_list, 1):
+        try:
+            print(f"[SMART_CLICK] Попытка {i}/{len(selectors_list)}: {name}")
+            element = page.locator(selector).first
+            element.wait_for(state="visible", timeout=timeout)
+            element.click()
+            print(f"[SMART_CLICK] [OK] Клик выполнен: {name}")
+            return True
+        except Exception as e:
+            print(f"[SMART_CLICK] [ERROR] Селектор {i} не сработал: {e}")
+            if i == len(selectors_list):
+                print(f"[SMART_CLICK] [!] Все селекторы не сработали для: {name}")
+                return False
+    return False
+
+
+def smart_fill(page, selectors_list, value, name="field", timeout=10000):
+    """
+    Умное заполнение с альтернативными селекторами
+
+    Args:
+        page: Playwright page
+        selectors_list: Список альтернативных селекторов
+        value: Значение для заполнения
+        name: Название поля для логов
+        timeout: Таймаут в миллисекундах
+    """
+    for i, selector in enumerate(selectors_list, 1):
+        try:
+            print(f"[SMART_FILL] Попытка {i}/{len(selectors_list)}: {name} = {value}")
+            element = page.locator(selector).first
+            element.wait_for(state="visible", timeout=timeout)
+            element.fill(value)
+            print(f"[SMART_FILL] [OK] Заполнено: {name}")
+            return True
+        except Exception as e:
+            print(f"[SMART_FILL] [ERROR] Селектор {i} не сработал: {e}")
+            if i == len(selectors_list):
+                print(f"[SMART_FILL] [!] Все селекторы не сработали для: {name}")
+                return False
+    return False
+
+
+def check_heading(page, expected_texts, timeout=5000):
+    """
+    Проверка наличия заголовка с альтернативными текстами
+
+    ВАЖНО: Используется для подтверждения загрузки страницы/шага.
+    Автоматически вызывается вместо page.get_by_role("heading").click()
+
+    ФИЛОСОФИЯ: Heading проверки НЕ обязательны - сайты могут:
+    - Показывать вопросы в разном порядке (A/B тесты)
+    - Пропускать вопросы для определенных пользователей
+    - Изменять текст заголовков динамически
+
+    Если heading не найден - логируем WARNING и ПРОДОЛЖАЕМ выполнение.
+    Exception бросаем только если ДЕЙСТВИЯ (click, fill) падают.
+
+    Использует substring matching (exact=False), т.к. Playwright Recorder
+    часто обрезает длинные заголовки до первых слов.
+
+    Args:
+        page: Playwright page
+        expected_texts: Список альтернативных текстов заголовка (может быть строка или список)
+        timeout: Таймаут в миллисекундах (по умолчанию 5 секунд - БЫСТРАЯ проверка)
+
+    Returns:
+        True если заголовок найден, False если не найден (не бросает exception!)
+    """
+    # Ensure expected_texts is a list
+    if isinstance(expected_texts, str):
+        expected_texts = [expected_texts]
+
+    for text in expected_texts:
+        try:
+            # First try exact match
+            heading = page.get_by_role("heading", name=text, exact=True)
+            heading.wait_for(state="visible", timeout=timeout)
+            print(f"[CHECK_HEADING] [OK] Найден заголовок (exact): {text}")
+            # Small delay for page stability after heading appears
+            time.sleep(0.5)
+            return True
+        except Exception as e:
+            # If exact match failed, try substring match
+            try:
+                heading = page.get_by_role("heading", name=text, exact=False)
+                heading.wait_for(state="visible", timeout=timeout)
+                print(f"[CHECK_HEADING] [OK] Найден заголовок (partial): {text}")
+                # Small delay for page stability after heading appears
+                time.sleep(0.5)
+                return True
+            except:
+                # Continue to next alternative
+                continue
+
+    # If no heading found, SILENTLY CONTINUE execution
+    # This allows handling of dynamic flows, A/B tests, skipped questions, etc.
+    # No logging needed - this is expected behavior for dynamic forms
+    # Even if heading not found, give page a moment to stabilize
+    time.sleep(0.3)
+    return False
+
+
+def safe_action(action_fn, description="action", critical=False):
+    """
+    Безопасное выполнение действия с обработкой ошибок
+
+    ФИЛОСОФИЯ: Большинство действий НЕ критичны - если кнопка не найдена,
+    возможно мы на другом шаге флоу. Продолжаем выполнение вместо остановки.
+
+    Args:
+        action_fn: Lambda функция с действием (например: lambda: page.click(...))
+        description: Описание действия для логов
+        critical: Если True - бросает exception при ошибке, если False - продолжает
+
+    Returns:
+        True если действие выполнено успешно, False если ошибка
+
+    Example:
+        safe_action(lambda: page.get_by_role("button", name="Next").click(), "Click Next button")
+    """
+    try:
+        action_fn()
+        print(f"[ACTION] [OK] {description}")
+        return True
+    except PlaywrightTimeout as e:
+        print(f"[ACTION] [WARNING] Timeout: {description}")
+        print(f"[ACTION] [INFO] Элемент не найден за отведенное время")
+        print(f"[ACTION] [INFO] Возможно, мы на другом шаге флоу или вопрос пропущен")
+        if critical:
+            print(f"[ACTION] [ERROR] Это критичное действие - останавливаем выполнение")
+            raise
+        print(f"[ACTION] [INFO] Продолжаем выполнение следующих шагов...")
+        # Small delay before continuing
+        time.sleep(0.3)
+        return False
+    except Exception as e:
+        print(f"[ACTION] [ERROR] Неожиданная ошибка: {description}")
+        print(f"[ACTION] [ERROR] {str(e)[:200]}")
+        if critical:
+            raise
+        print(f"[ACTION] [INFO] Продолжаем выполнение...")
+        time.sleep(0.3)
+        return False
+
+
+def wait_for_navigation(page, timeout=30000):
+    """Ожидание завершения навигации"""
+    try:
+        page.wait_for_load_state("networkidle", timeout=timeout)
+        print("[NAVIGATION] [OK] Страница загружена")
+        return True
+    except:
+        print("[NAVIGATION] [!] Таймаут навигации")
+        return False
+
+
+'''
+
+    def _generate_csv_loader(self) -> str:
+        return '''# ============================================================
+# ЗАГРУЗКА CSV
+# ============================================================
+
+def load_csv_data() -> List[Dict]:
+    """
+    Загрузить данные из CSV файла через диалог выбора файла
+
+    Открывает окно выбора файла, позволяя выбрать CSV файл из любой папки.
+    Файл должен иметь заголовки (первая строка).
+    """
+    print("[CSV] Выберите CSV файл с данными...")
+
+    # Создать скрытое окно Tkinter для диалога
+    root = Tk()
+    root.withdraw()  # Скрыть главное окно
+    root.attributes('-topmost', True)  # Поверх всех окон
+
+    # Открыть диалог выбора файла
+    csv_file_path = filedialog.askopenfilename(
+        title="Выберите CSV файл с данными",
+        filetypes=[
+            ("CSV файлы", "*.csv"),
+            ("Все файлы", "*.*")
+        ],
+        initialdir=os.path.expanduser("~")  # Начать с домашней папки
+    )
+
+    root.destroy()  # Уничтожить окно Tkinter
+
+    # Проверить что файл был выбран
+    if not csv_file_path:
+        print("[CSV] [ERROR] Файл не выбран. Выход.")
+        return []
+
+    # Проверить что файл существует
+    if not os.path.exists(csv_file_path):
+        print(f"[CSV] [ERROR] Файл не существует: {csv_file_path}")
+        return []
+
+    print(f"[CSV] Загрузка файла: {csv_file_path}")
+
+    # Загрузить CSV
+    data = []
+    try:
+        with open(csv_file_path, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            data = list(reader)
+
+        print(f"[CSV] [OK] Загружено {len(data)} строк")
+
+        # Показать заголовки
+        if data and len(data) > 0:
+            headers = list(data[0].keys())
+            print(f"[CSV] Заголовки: {', '.join(headers)}")
+
+    except Exception as e:
+        print(f"[CSV] [ERROR] Ошибка загрузки CSV: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+    return data
+
+
+'''
+
+    def _clean_user_code(self, user_code: str) -> str:
+        """
+        Очистить пользовательский код от boilerplate Playwright Recorder
+
+        Удаляет:
+        - import statements
+        - def run(playwright) wrapper
+        - browser.launch(), context, page creation
+        - browser.close(), context.close()
+        - with sync_playwright() wrapper
+
+        Трансформирует:
+        - page.get_by_role("heading", name="...").click() → check_heading(page, ["..."])
+        - Все page.* действия → обернуты в try-except для resilience
+
+        ФИЛОСОФИЯ: Сайты с динамическими опросниками показывают вопросы в разном порядке.
+        Действия должны продолжаться даже если элемент не найден - возможно другой вариант флоу.
+
+        Оставляет только действия пользователя (page.goto, page.get_by_role, etc.)
+        """
+        import re
+
+        # CRITICAL FIX: Normalize tabs to spaces BEFORE processing
+        # This prevents TabError and IndentationError when user copies code with mixed tabs/spaces
+        user_code = user_code.replace('\t', '    ')  # Replace all tabs with 4 spaces
+
+        lines = user_code.split('\n')
+        cleaned_lines = []
+        in_run_function = False
+        base_indent = None
+
+        for line in lines:
+            stripped = line.strip()
+
+            # Skip empty lines
+            if not stripped:
+                continue
+
+            # Check if comment is a special command - if yes, keep it
+            if stripped.startswith('#'):
+                comment_lower = stripped.lower()
+                # Special commands that should be preserved
+                is_special_command = (
+                    re.match(r'#\s*pause\s*\d+', comment_lower) or  # #pause10
+                    comment_lower in ['#scrolldown', '#scroll', '#scrollup', '#scrollmid', '#toggle_switches', '#optional']
+                )
+                if not is_special_command:
+                    # Skip regular comments
+                    continue
+                # If it's a special command, DON'T continue - let it be processed through indentation handling below
+
+            # Skip imports
+            if stripped.startswith('import ') or stripped.startswith('from '):
+                continue
+
+            # Skip def run(playwright) line
+            if 'def run(' in stripped and 'playwright' in stripped:
+                in_run_function = True
+                continue
+
+            # Skip browser/context/page setup
+            if any(pattern in stripped for pattern in [
+                'browser = playwright.chromium.launch',
+                'context = browser.new_context',
+                'page = context.new_page',
+                'browser.launch(',
+                'new_context(',
+                'new_page('
+            ]):
+                continue
+
+            # Skip browser/context close
+            if any(pattern in stripped for pattern in [
+                'context.close()',
+                'browser.close()',
+                '.close()'
+            ]) and 'page' not in stripped:
+                continue
+
+            # Skip with sync_playwright wrapper
+            if 'with sync_playwright()' in stripped:
+                continue
+            if stripped == 'run(playwright)':
+                continue
+
+            # Skip separator comments
+            if stripped.startswith('# -----'):
+                continue
+
+            # Transform heading clicks into check_heading() calls
+            if 'get_by_role("heading"' in stripped or "get_by_role('heading'" in stripped:
+                # Extract heading text using regex
+                # Patterns: page.get_by_role("heading", name="TEXT").click()
+                #           page.get_by_role('heading', name='TEXT').click()
+                match = re.search(r'get_by_role\(["\']heading["\']\s*,\s*name=["\']([^"\']+)["\']', stripped)
+                if match:
+                    heading_text = match.group(1)
+                    # Get current line indentation
+                    current_indent = len(line) - len(line.lstrip())
+
+                    # Remove base indentation if we're in run function
+                    if in_run_function and base_indent is not None:
+                        current_indent = max(0, current_indent - base_indent)
+
+                    # Generate check_heading call with fast timeout (5s) for quick fail-over
+                    transformed_line = ' ' * current_indent + f'check_heading(page, ["{heading_text}"], timeout=5000)'
+                    cleaned_lines.append(transformed_line)
+                    continue
+                else:
+                    # If we can't parse, skip the line (likely malformed)
+                    continue
+
+            # If we're in run function, adjust indentation
+            if in_run_function and stripped:
+                # Detect base indentation from first real action
+                if base_indent is None and not stripped.startswith('def '):
+                    base_indent = len(line) - len(line.lstrip())
+
+                # Remove base indentation
+                if base_indent is not None:
+                    if line.startswith(' ' * base_indent):
+                        cleaned_line = line[base_indent:]
+                        cleaned_lines.append(cleaned_line)
+                    else:
+                        # Line with less indentation - keep as is
+                        cleaned_lines.append(line.lstrip())
+
+        cleaned_code = '\n'.join(cleaned_lines)
+
+        # If we couldn't extract anything, return original code
+        # (maybe it's already clean or in different format)
+        if not cleaned_code.strip():
+            return user_code
+
+        # Wrap all actions in resilient try-except blocks for dynamic flows
+        return self._wrap_actions_for_resilience(cleaned_code)
+
+    def _add_timeout_to_action(self, code: str, timeout_ms: int = 15000) -> str:
+        """
+        Добавить явный timeout к Playwright действию
+
+        Добавляет timeout=15000 (или другое значение) к методам действий.
+        Это позволяет для #optional действий использовать короткий таймаут
+        вместо долгих retry с прогрессивными задержками.
+
+        Args:
+            code: Строка кода Playwright (например, page.click())
+            timeout_ms: Таймаут в миллисекундах (по умолчанию 15000 = 15 сек)
+
+        Returns:
+            Код с добавленным timeout параметром
+
+        Examples:
+            page.click() → page.click(timeout=15000)
+            page.fill("text") → page.fill("text", timeout=15000)
+            page.click(force=True) → page.click(force=True, timeout=15000)
+        """
+        import re
+
+        # Find the last method call in the chain (click, fill, press, etc.)
+        # Pattern: method_name( ... )
+        pattern = r'(\.(click|fill|press|type|check|uncheck|select_option|set_checked))\(([^)]*)\)'
+
+        def add_timeout(match):
+            method = match.group(1)  # .click, .fill, etc.
+            params = match.group(3).strip()  # existing parameters
+
+            # If there are existing parameters, add timeout as additional param
+            if params:
+                return f"{method}({params}, timeout={timeout_ms})"
+            else:
+                return f"{method}(timeout={timeout_ms})"
+
+        # Replace the last occurrence only (rightmost method in chain)
+        # Find all matches
+        matches = list(re.finditer(pattern, code))
+        if matches:
+            # Replace only the last match
+            last_match = matches[-1]
+            modified = add_timeout(last_match)
+            code = code[:last_match.start()] + modified + code[last_match.end():]
+
+        return code
+
+    def _replace_fill_with_typing(self, code: str) -> str:
+        """
+        Замена .fill() на .press_sequentially() для симуляции человеческого ввода
+
+        Args:
+            code: Строка кода Playwright
+
+        Returns:
+            Код с замененным .fill() на .press_sequentially(delay=X)
+        """
+        if not self.simulate_typing or '.fill(' not in code:
+            return code
+
+        import re
+        # Заменить .fill(...) на .press_sequentially(..., delay=X)
+        # Паттерн: .fill("text") или .fill('text') или .fill(variable)
+        # ВАЖНО: typing_delay в миллисекундах, но Playwright ожидает секунды
+        pattern = r'\.fill\(([^)]+)\)'
+        replacement = f'.press_sequentially(\\1, delay={self.typing_delay / 1000})'
+        return re.sub(pattern, replacement, code)
+
+    def _wrap_actions_for_resilience(self, code: str) -> str:
+        """
+        Обернуть все Playwright действия в try-except для resilience
+
+        ФИЛОСОФИЯ: Динамические опросники меняют порядок вопросов каждый раз.
+        Если кнопка/поле не найдено - это НОРМАЛЬНО, просто другой вариант флоу.
+        Продолжаем выполнение вместо остановки.
+
+        Оборачивает:
+        - page.click()
+        - page.fill()
+        - page.get_by_*().click()/fill()
+        - page.locator().click()/fill()
+        - with page.expect_popup() (критично - НЕ оборачиваем)
+        - page.goto() (критично - НЕ оборачиваем)
+        """
+        import re
+
+        lines = code.split('\n')
+        wrapped_lines = []
+        i = 0
+        inside_with_block = False
+        with_block_indent = 0
+        next_action_optional = False  # Track #optional marker
+        next_action_scroll_search = False  # Track #scroll_search marker
+        current_page_context = 'page'  # Track current page context (page, page1, page2, page3)
+
+        while i < len(lines):
+            line = lines[i]
+            stripped = line.strip()
+
+            # Check for inline special commands (e.g., "page.fill(...)  #pause10")
+            inline_command = None
+            if '#' in stripped and not stripped.startswith('#'):
+                # Split code and comment
+                code_part, _, comment_part = stripped.partition('#')
+                code_part = code_part.strip()
+                comment_part = '#' + comment_part.strip()
+
+                # Check if comment is a special command
+                if self._is_special_command(comment_part):
+                    inline_command = comment_part
+                    stripped = code_part  # Continue processing with code only
+                    # Recreate line with proper indentation
+                    indent = len(line) - len(line.lstrip())
+                    line = ' ' * indent + code_part
+
+            # Check for #optional marker
+            if stripped.lower() == '#optional':
+                next_action_optional = True
+                # Calculate correct indentation (accounting for 'with' blocks)
+                indent = len(line) - len(line.lstrip())
+                if inside_with_block and indent <= with_block_indent:
+                    indent = with_block_indent + 4
+                indent_str = ' ' * indent
+                wrapped_lines.append(f"{indent_str}# Next action is optional (will not fail script if element not found)")
+                i += 1
+                continue
+
+            # Check for #scroll_search marker
+            if stripped.lower() == '#scroll_search':
+                next_action_scroll_search = True
+                # Calculate correct indentation (accounting for 'with' blocks)
+                indent = len(line) - len(line.lstrip())
+                if inside_with_block and indent <= with_block_indent:
+                    indent = with_block_indent + 4
+                indent_str = ' ' * indent
+                wrapped_lines.append(f"{indent_str}# Next action will use aggressive scroll search (will search entire page with scrolling)")
+                i += 1
+                continue
+
+            # Skip empty lines
+            if not stripped:
+                wrapped_lines.append(line)
+                i += 1
+                continue
+
+            # Handle special command comments BEFORE treating as regular comments
+            if stripped.startswith('#'):
+                # Calculate correct indentation (accounting for 'with' blocks)
+                indent = len(line) - len(line.lstrip())
+
+                # FIX: Apply same indentation fix as for regular actions
+                # If we're inside a with block and line has wrong indent, fix it
+                if inside_with_block and indent <= with_block_indent:
+                    # Line inside with block should have at least with_block_indent + 4
+                    indent = with_block_indent + 4
+
+                indent_str = ' ' * indent
+                command_handled = self._handle_special_command(stripped, indent_str, wrapped_lines, current_page_context)
+                if command_handled:
+                    # Special command was processed, continue to next line
+                    i += 1
+                    continue
+                else:
+                    # Regular comment, keep as is (with potentially fixed indent)
+                    wrapped_lines.append(indent_str + stripped)
+                    i += 1
+                    continue
+
+            # Get current indentation
+            indent = len(line) - len(line.lstrip())
+            indent_str = ' ' * indent
+
+            # Track if we're inside a 'with' block (page, page1, page2, page3)
+            if any(pattern in stripped for pattern in [
+                'with page.expect_popup(',
+                'with page.expect_navigation(',
+                'with page1.expect_popup(',
+                'with page1.expect_navigation(',
+                'with page2.expect_popup(',
+                'with page2.expect_navigation(',
+                'with page3.expect_popup(',
+                'with page3.expect_navigation(',
+            ]):
+                inside_with_block = True
+                with_block_indent = indent
+
+            # Fix indentation if code inside 'with' block has no indent (BEFORE checking exit!)
+            # This MUST be done before "exited with block" check
+            if inside_with_block and indent <= with_block_indent and stripped and not stripped.startswith('with'):
+                # We're inside a with block but line has same/less indent - FIX IT
+                # This happens when code is copy-pasted and loses indentation
+                print(f"[GENERATOR] [WARNING] Fixed indentation inside 'with' block for: {stripped[:50]}")
+                # Add 4 spaces indent - update the actual line
+                line = ' ' * (with_block_indent + 4) + stripped
+                stripped = line.strip()  # Keep stripped version updated
+                indent = with_block_indent + 4  # Update indent for further processing
+                indent_str = ' ' * indent
+            elif inside_with_block and indent <= with_block_indent and not stripped.startswith('with'):
+                # Only exit 'with' block if we didn't just fix indentation
+                # and this is not the 'with' statement itself
+                inside_with_block = False
+
+            # Check if this is a critical action that should NOT be wrapped (must succeed)
+            is_critical = any(pattern in stripped for pattern in [
+                'page.goto(',
+                'with page.expect_popup(',
+                'with page.expect_navigation(',
+                'check_heading(',  # Already has resilience built-in
+                '= page',  # Variable assignments (page1 = ...)
+                'wait_for_navigation(',
+                'page1.',  # Actions on popup windows (page1, page2, etc.) - critical
+                'page2.',
+                'page3.',
+            ])
+
+            # Check if this is a resilient action (click, fill, etc.)
+            is_action = any(pattern in stripped for pattern in [
+                '.click(',
+                '.fill(',
+                '.select_option(',
+                '.check(',
+                '.uncheck(',
+                '.set_checked(',
+                '.press(',
+                '.type(',
+            ])
+
+            # Actions inside 'with' blocks are critical (must succeed to open popup/navigate)
+            # BUT: if #optional marker was set, respect it even inside with blocks
+            if inside_with_block and indent > with_block_indent and not next_action_optional:
+                is_critical = True
+
+            # If #optional marker was set, force this action to be non-critical
+            # This check MUST come AFTER with-block check to override it
+            if next_action_optional and is_action:
+                is_critical = False
+                next_action_optional = False  # Reset marker ONLY after processing an action
+
+            # Check if this is a popup page action (page1/page2/page3) that needs retry logic
+            is_popup_action = is_action and any(f'page{n}.' in stripped for n in [1, 2, 3])
+
+            # If #scroll_search marker was set, generate aggressive scroll search code
+            if next_action_scroll_search and is_action:
+                action_desc = self._extract_action_description(stripped)
+                action_desc = action_desc.replace("'", "'").replace("'", "'").replace('"', '\\"')
+                sanitized_code = stripped.replace("'", "'").replace("'", "'")
+                sanitized_code = self._replace_fill_with_typing(sanitized_code)
+
+                # 🔥 FIX: If #optional was also set, add short timeout to scroll_search attempts
+                # This prevents 90+ second waits (3 positions × 30s default timeout)
+                scroll_timeout = 10000  # Default: 10 seconds per scroll position
+                if next_action_optional:
+                    scroll_timeout = 8000  # Shorter timeout for optional elements: 8 seconds
+                    wrapped_lines.append(f"{indent_str}# This is an OPTIONAL scroll search (short timeout)")
+
+                # Add explicit timeout to the action
+                sanitized_code = self._add_timeout_to_action(sanitized_code, timeout_ms=scroll_timeout)
+
+                # Extract page variable (page, page1, page2, page3)
+                import re
+                match = re.search(r'(page\d*)\.', stripped)
+                page_var = match.group(1) if match else 'page'
+
+                # Extract element selector for logging
+                selector_part = stripped.split(f'{page_var}.')[1] if f'{page_var}.' in stripped else stripped
+
+                wrapped_lines.append(f"{indent_str}# Aggressive scroll search: try multiple scroll positions and retries")
+                wrapped_lines.append(f"{indent_str}scroll_search_found = False")
+                wrapped_lines.append(f"{indent_str}scroll_positions = [")
+                wrapped_lines.append(f"{indent_str}    ('bottom', 'document.body.scrollHeight'),  # Scroll to bottom")
+                wrapped_lines.append(f"{indent_str}    ('middle', 'document.body.scrollHeight / 2'),  # Scroll to middle")
+                wrapped_lines.append(f"{indent_str}    ('top', '0'),  # Scroll to top")
+                wrapped_lines.append(f"{indent_str}]")
+                wrapped_lines.append(f"{indent_str}")
+                wrapped_lines.append(f"{indent_str}for scroll_name, scroll_pos in scroll_positions:")
+                wrapped_lines.append(f"{indent_str}    if scroll_search_found:")
+                wrapped_lines.append(f"{indent_str}        break")
+                wrapped_lines.append(f"{indent_str}    ")
+                wrapped_lines.append(f'{indent_str}    print(f"[SCROLL_SEARCH] Scrolling to {{scroll_name}}, searching for: {selector_part[:50]}...", flush=True)')
+                wrapped_lines.append(f"{indent_str}    try:")
+                wrapped_lines.append(f"{indent_str}        # Scroll to position")
+                wrapped_lines.append(f"{indent_str}        {page_var}.evaluate(f'window.scrollTo(0, {{scroll_pos}})')")
+                wrapped_lines.append(f"{indent_str}        time.sleep(1)  # Wait for content to load after scroll")
+                wrapped_lines.append(f"{indent_str}        ")
+                wrapped_lines.append(f"{indent_str}        # Wait for page to stabilize")
+                wrapped_lines.append(f"{indent_str}        try:")
+                wrapped_lines.append(f"{indent_str}            {page_var}.wait_for_load_state('domcontentloaded', timeout=3000)")
+                wrapped_lines.append(f"{indent_str}        except:")
+                wrapped_lines.append(f"{indent_str}            pass")
+                wrapped_lines.append(f"{indent_str}        ")
+                wrapped_lines.append(f"{indent_str}        # Try to find and interact with element (with timeout={scroll_timeout}ms)")
+                wrapped_lines.append(f"{indent_str}        {sanitized_code}")
+                wrapped_lines.append(f'{indent_str}        print(f"[SCROLL_SEARCH] [OK] Element found at {{scroll_name}}: {action_desc}", flush=True)')
+                wrapped_lines.append(f"{indent_str}        scroll_search_found = True")
+                wrapped_lines.append(f"{indent_str}        break")
+                wrapped_lines.append(f"{indent_str}    except PlaywrightTimeout:")
+                wrapped_lines.append(f'{indent_str}        print(f"[SCROLL_SEARCH] Element not found at {{scroll_name}}, trying next position...", flush=True)')
+                wrapped_lines.append(f"{indent_str}        continue")
+                wrapped_lines.append(f"{indent_str}")
+                wrapped_lines.append(f"{indent_str}if not scroll_search_found:")
+                wrapped_lines.append(f'{indent_str}    print(f"[SCROLL_SEARCH] [WARNING] Element not found after searching entire page: {action_desc}", flush=True)')
+                wrapped_lines.append(f'{indent_str}    print(f"[SCROLL_SEARCH] [INFO] Continuing execution (element may not be required)...", flush=True)')
+
+                next_action_scroll_search = False  # Reset marker
+                next_action_optional = False  # Reset optional marker (both flags consumed)
+                i += 1
+                continue
+
+            # Wrap action in try-except if it's resilient (not critical)
+            if is_action and not is_critical:
+                # Extract action description for logging (sanitize quotes)
+                action_desc = self._extract_action_description(stripped)
+                # Replace curly quotes for safe f-string usage in logs
+                action_desc = action_desc.replace("'", "'").replace("'", "'").replace('"', '\\"')
+
+                # IMPORTANT: Replace curly quotes in the actual code too!
+                # Playwright Recorder can generate code with curly quotes like "Let's go"
+                sanitized_code = stripped.replace("'", "'").replace("'", "'")
+
+                # 🔥 Replace .fill() with .press_sequentially() for human typing simulation
+                sanitized_code = self._replace_fill_with_typing(sanitized_code)
+
+                # 🔥 Add explicit short timeout for optional actions (originally marked with #optional)
+                # This adds timeout=15000 (15 seconds) to the action call
+                sanitized_code = self._add_timeout_to_action(sanitized_code, timeout_ms=15000)
+
+                wrapped_lines.append(f"{indent_str}try:")
+                wrapped_lines.append(f"{indent_str}    {sanitized_code}")
+                wrapped_lines.append(f"{indent_str}except PlaywrightTimeout:")
+                wrapped_lines.append(f'{indent_str}    print(f"[ACTION] [WARNING] Timeout: {action_desc}", flush=True)')
+                wrapped_lines.append(f'{indent_str}    print(f"[ACTION] [INFO] Элемент не найден - возможно другой вариант флоу, продолжаем...", flush=True)')
+                wrapped_lines.append(f"{indent_str}    pass  # Continue execution")
+            elif is_popup_action and is_critical:
+                # Popup page actions need retry logic with extended timeout
+                action_desc = self._extract_action_description(stripped)
+                action_desc = action_desc.replace("'", "'").replace("'", "'").replace('"', '\\"')
+                sanitized_code = stripped.replace("'", "'").replace("'", "'")
+
+                # 🔥 Replace .fill() with .press_sequentially() for human typing simulation
+                sanitized_code = self._replace_fill_with_typing(sanitized_code)
+
+                # Extract page variable and selector for smart handling
+                import re
+                match = re.search(r'(page\d+)\.', stripped)
+                page_var = match.group(1) if match else 'page1'
+
+                # Extract selector information for element checking
+                selector_match = re.search(r'\.get_by_\w+\([^)]+\)', stripped) or re.search(r'\.locator\([^)]+\)', stripped)
+                has_selector = bool(selector_match)
+
+                wrapped_lines.append(f"{indent_str}# Retry logic for popup page action with progressive delays and smart scrolling")
+                wrapped_lines.append(f"{indent_str}max_retries = 5")
+                wrapped_lines.append(f"{indent_str}progressive_delays = [5, 10, 15, 20, 30]  # Progressive delays in seconds")
+                wrapped_lines.append(f"{indent_str}for retry_attempt in range(max_retries):")
+                wrapped_lines.append(f"{indent_str}    try:")
+                wrapped_lines.append(f"{indent_str}        if retry_attempt > 0:")
+                wrapped_lines.append(f'{indent_str}            delay = progressive_delays[retry_attempt - 1]')
+                wrapped_lines.append(f'{indent_str}            print(f"[POPUP_RETRY] Attempt {{retry_attempt+1}}/{{max_retries}} (waiting {{delay}}s): {action_desc}", flush=True)')
+                wrapped_lines.append(f"{indent_str}            time.sleep(delay)")
+                wrapped_lines.append(f"{indent_str}            # Wait for page to stabilize")
+                wrapped_lines.append(f"{indent_str}            {page_var}.wait_for_load_state('domcontentloaded', timeout=5000)")
+
+                # Add scroll_into_view_if_needed for actions with selectors
+                if has_selector and '.click()' in stripped:
+                    # Extract the element locator part (everything before .click())
+                    click_pos = stripped.find('.click()')
+                    element_part = stripped[:click_pos].strip()
+                    wrapped_lines.append(f"{indent_str}        # Try to scroll element into view if needed")
+                    wrapped_lines.append(f"{indent_str}        try:")
+                    wrapped_lines.append(f"{indent_str}            _element = {element_part}")
+                    wrapped_lines.append(f"{indent_str}            _element.scroll_into_view_if_needed(timeout=3000)")
+                    wrapped_lines.append(f"{indent_str}            time.sleep(0.2)  # Wait for scroll animation")
+                    wrapped_lines.append(f'{indent_str}            print(f"[POPUP_ACTION] Element scrolled into view", flush=True)')
+                    wrapped_lines.append(f"{indent_str}        except:")
+                    wrapped_lines.append(f'{indent_str}            print(f"[POPUP_ACTION] [WARNING] Could not scroll element, will try with original selector", flush=True)')
+                    wrapped_lines.append(f"{indent_str}            pass")
+                    # Always use original code for reliability
+                    wrapped_lines.append(f"{indent_str}        {sanitized_code}")
+                else:
+                    wrapped_lines.append(f"{indent_str}        {sanitized_code}")
+
+                wrapped_lines.append(f'{indent_str}        print(f"[POPUP_ACTION] [OK] {action_desc}", flush=True)')
+                wrapped_lines.append(f"{indent_str}        break  # Success - exit retry loop")
+                wrapped_lines.append(f"{indent_str}    except PlaywrightTimeout:")
+                wrapped_lines.append(f"{indent_str}        if retry_attempt == max_retries - 1:")
+                wrapped_lines.append(f'{indent_str}            print(f"[POPUP_ACTION] [ERROR] Failed after {{max_retries}} attempts (total {{sum(progressive_delays)}}s): {action_desc}", flush=True)')
+                # Determine at generation time if this is an optional expandable button
+                optional_keywords = ['show more', 'see more', 'load more', 'view more', 'expand', 'показать больше']
+                action_lower = action_desc.lower()
+                is_optional_button = any(keyword in action_lower for keyword in optional_keywords)
+
+                if is_optional_button:
+                    # Generate code that treats this as optional
+                    wrapped_lines.append(f"{indent_str}            # Smart detection: This appears to be an optional expandable button")
+                    wrapped_lines.append(f'{indent_str}            print(f"[POPUP_ACTION] [INFO] Button may not exist if content already loaded", flush=True)')
+                    wrapped_lines.append(f'{indent_str}            print(f"[POPUP_ACTION] [INFO] Checking page state...", flush=True)')
+                    wrapped_lines.append(f"{indent_str}            try:")
+                    wrapped_lines.append(f"{indent_str}                {page_var}.wait_for_load_state('domcontentloaded', timeout=3000)")
+                    wrapped_lines.append(f'{indent_str}                print(f"[POPUP_ACTION] [OK] Page stable - content likely already loaded, continuing...", flush=True)')
+                    wrapped_lines.append(f"{indent_str}            except:")
+                    wrapped_lines.append(f'{indent_str}                print(f"[POPUP_ACTION] [WARNING] Page check failed but treating as optional", flush=True)')
+                    wrapped_lines.append(f"{indent_str}            break  # Continue execution without raising error")
+                else:
+                    # Generate code that treats this as critical
+                    wrapped_lines.append(f"{indent_str}            raise  # Re-raise on final attempt for critical buttons")
+
+                wrapped_lines.append(f"{indent_str}        else:")
+                wrapped_lines.append(f'{indent_str}            print(f"[POPUP_RETRY] Timeout on attempt {{retry_attempt+1}}, retrying with longer delay...", flush=True)')
+                wrapped_lines.append(f"{indent_str}            continue")
+            else:
+                # Keep as-is (critical actions or non-actions)
+                # But still sanitize curly quotes in critical code
+                sanitized_line = line.replace("'", "'").replace("'", "'")
+
+                # 🔥 Replace .fill() with .press_sequentially() for human typing simulation
+                sanitized_line = self._replace_fill_with_typing(sanitized_line)
+
+                # Check for special command comments (e.g., #pause10, #scrolldown)
+                if stripped.startswith('#'):
+                    command_handled = self._handle_special_command(stripped, indent_str, wrapped_lines, current_page_context)
+                    if command_handled:
+                        i += 1
+                        continue
+
+                wrapped_lines.append(sanitized_line)
+
+                # If this is a popup page assignment, add scroll verification code
+                # This helps verify page control and loads elements at the bottom
+                if '= page1_info.value' in sanitized_line or '= page2_info.value' in sanitized_line or '= page3_info.value' in sanitized_line:
+                    # Extract page variable name (page1, page2, etc.)
+                    import re
+                    match = re.search(r'(\w+)\s*=\s*page\d+_info\.value', sanitized_line)
+                    if match:
+                        page_var = match.group(1)
+                        # Update current page context for special commands
+                        current_page_context = page_var
+                        wrapped_lines.append(f"{indent_str}# Wait for popup page to load and stabilize")
+                        wrapped_lines.append(f"{indent_str}time.sleep(1.5)  # Extended wait for popup to fully load")
+                        wrapped_lines.append(f"{indent_str}{page_var}.wait_for_load_state('domcontentloaded')")
+                        wrapped_lines.append(f"{indent_str}try:")
+                        wrapped_lines.append(f"{indent_str}    {page_var}.wait_for_load_state('networkidle', timeout=10000)")
+                        wrapped_lines.append(f'{indent_str}    print(f"[POPUP] Network stabilized on {page_var}", flush=True)')
+                        wrapped_lines.append(f"{indent_str}except:")
+                        wrapped_lines.append(f'{indent_str}    print(f"[POPUP] Network idle timeout - continuing anyway", flush=True)')
+                        wrapped_lines.append(f"{indent_str}    pass")
+                        wrapped_lines.append(f'{indent_str}print(f"[POPUP] [OK] {page_var} page loaded - use #scrolldown/#scrollmid for manual scroll control", flush=True)')
+
+            # Process inline special command if found
+            if inline_command:
+                indent_str = ' ' * (len(line) - len(line.lstrip()))
+                command_handled = self._handle_special_command(inline_command, indent_str, wrapped_lines, current_page_context)
+                if not command_handled:
+                    print(f"[GENERATOR] [WARNING] Inline command not recognized: {inline_command}")
+
+            i += 1
+
+        return '\n'.join(wrapped_lines)
+
+    def _is_special_command(self, comment: str) -> bool:
+        """
+        Проверить, является ли комментарий специальной командой
+
+        Args:
+            comment: Комментарий для проверки
+
+        Returns:
+            True если это специальная команда, False если обычный комментарий
+        """
+        import re
+        comment_lower = comment.lower().strip()
+
+        # Check for pause command
+        if re.match(r'#\s*pause\s*\d+', comment_lower):
+            return True
+
+        # Check for other special commands
+        special_commands = [
+            '#toggle_switches',
+            '#optional',
+            '#scroll_search',
+            '#scrolldown',
+            '#scroll',
+            '#scrollup',
+            '#scrollmid'
+        ]
+
+        for cmd in special_commands:
+            if comment_lower == cmd or comment_lower.replace(' ', '') == cmd:
+                return True
+
+        return False
+
+    def _handle_special_command(self, comment: str, indent_str: str, wrapped_lines: list, page_context: str = 'page') -> bool:
+        """
+        Обработать специальные команды в комментариях
+
+        Поддерживаемые команды:
+        - #pause5, #pause10, #pause20 - пауза N секунд (любое число)
+        - #scrolldown, #scroll - скролл вниз до конца страницы
+        - #scrollup - скролл вверх к началу страницы
+        - #scrollmid - скролл к середине страницы
+        - #toggle_switches - переключить switches (снять первый checked, поставить первый unchecked)
+        - #optional - следующее действие опционально (обернуть в try-except, даже если это page2)
+        - #scroll_search - агрессивный поиск элемента по всей странице (скролл вверх-вниз-середина)
+
+        Args:
+            page_context: Текущий контекст страницы (page, page1, page2, page3)
+
+        Returns:
+            True если команда обработана, False если это обычный комментарий
+        """
+        import re
+
+        comment_lower = comment.lower().strip()
+
+        # #pause5, #pause10, #pause20 - пауза N секунд (поддерживает пробелы: "# pause10")
+        pause_match = re.match(r'#\s*pause\s*(\d+)', comment_lower)
+        if pause_match:
+            seconds = pause_match.group(1)
+            wrapped_lines.append(f"{indent_str}# User command: pause {seconds} seconds")
+            wrapped_lines.append(f"{indent_str}print(f'[PAUSE] Waiting {seconds} seconds...', flush=True)")
+            wrapped_lines.append(f"{indent_str}time.sleep({seconds})")
+            wrapped_lines.append(f"{indent_str}print(f'[PAUSE] Resume', flush=True)")
+            return True
+
+        # #toggle_switches - переключить switches (первый checked -> uncheck, первый unchecked -> check)
+        if comment_lower == '#toggle_switches':
+            wrapped_lines.append(f"{indent_str}# User command: toggle switches")
+            wrapped_lines.append(f"{indent_str}print(f'[SWITCHES] Toggling switches on {page_context}...')")
+            wrapped_lines.append(f"{indent_str}try:")
+            wrapped_lines.append(f"{indent_str}    # Find all switches on the page")
+            wrapped_lines.append(f"{indent_str}    switches = {page_context}.get_by_role('switch').all()")
+            wrapped_lines.append(f'{indent_str}    print(f"[SWITCHES] Found {{len(switches)}} switches")')
+            wrapped_lines.append(f"{indent_str}    ")
+            wrapped_lines.append(f"{indent_str}    # Find first checked switch and uncheck it")
+            wrapped_lines.append(f"{indent_str}    for i, switch in enumerate(switches):")
+            wrapped_lines.append(f"{indent_str}        if switch.is_checked():")
+            wrapped_lines.append(f'{indent_str}            print(f"[SWITCHES] Unchecking switch {{i+1}} (was checked)")')
+            wrapped_lines.append(f"{indent_str}            switch.uncheck()")
+            wrapped_lines.append(f"{indent_str}            time.sleep(0.3)")
+            wrapped_lines.append(f"{indent_str}            break")
+            wrapped_lines.append(f"{indent_str}    ")
+            wrapped_lines.append(f"{indent_str}    # Find first unchecked switch and check it")
+            wrapped_lines.append(f"{indent_str}    for i, switch in enumerate(switches):")
+            wrapped_lines.append(f"{indent_str}        if not switch.is_checked():")
+            wrapped_lines.append(f'{indent_str}            print(f"[SWITCHES] Checking switch {{i+1}} (was unchecked)")')
+            wrapped_lines.append(f"{indent_str}            switch.check()")
+            wrapped_lines.append(f"{indent_str}            time.sleep(0.3)")
+            wrapped_lines.append(f"{indent_str}            break")
+            wrapped_lines.append(f"{indent_str}    ")
+            wrapped_lines.append(f'{indent_str}    print(f"[SWITCHES] Switches toggled successfully")')
+            wrapped_lines.append(f"{indent_str}except Exception as e:")
+            wrapped_lines.append(f'{indent_str}    print(f"[SWITCHES] [ERROR] Failed to toggle switches: {{e}}")')
+            return True
+
+        # #optional - следующее действие опционально (будет обработано в основном коде)
+        if comment_lower == '#optional':
+            # This is a marker - will be handled in the main wrapping logic
+            # Just preserve the comment for now
+            return False
+
+        # #scrolldown or #scroll - скролл вниз
+        if comment_lower in ['#scrolldown', '#scroll']:
+            wrapped_lines.append(f"{indent_str}# User command: scroll down")
+            wrapped_lines.append(f"{indent_str}print(f'[SCROLL] Scrolling down on {page_context}...')")
+            wrapped_lines.append(f"{indent_str}{page_context}.evaluate('window.scrollTo(0, document.body.scrollHeight)')")
+            wrapped_lines.append(f"{indent_str}time.sleep(0.5)")
+            return True
+
+        # #scrollup - скролл вверх
+        if comment_lower == '#scrollup':
+            wrapped_lines.append(f"{indent_str}# User command: scroll up")
+            wrapped_lines.append(f"{indent_str}print(f'[SCROLL] Scrolling up on {page_context}...')")
+            wrapped_lines.append(f"{indent_str}{page_context}.evaluate('window.scrollTo(0, 0)')")
+            wrapped_lines.append(f"{indent_str}time.sleep(0.5)")
+            return True
+
+        # #scrollmid - скролл к середине
+        if comment_lower == '#scrollmid':
+            wrapped_lines.append(f"{indent_str}# User command: scroll to middle")
+            wrapped_lines.append(f"{indent_str}print(f'[SCROLL] Scrolling to middle on {page_context}...')")
+            wrapped_lines.append(f"{indent_str}{page_context}.evaluate('window.scrollTo(0, document.body.scrollHeight / 2)')")
+            wrapped_lines.append(f"{indent_str}time.sleep(0.5)")
+            return True
+
+        # Not a special command, just a regular comment
+        return False
+
+    def _extract_action_description(self, line: str) -> str:
+        """Извлечь описание действия для логирования"""
+        import re
+
+        # Try to extract element description from various patterns
+
+        # page.get_by_role("button", name="Next").click()
+        match = re.search(r'get_by_role\(["\'](\w+)["\']\s*,\s*name=["\']([^"\']+)["\']', line)
+        if match:
+            role, name = match.groups()
+            action = 'click' if '.click(' in line else 'fill' if '.fill(' in line else 'action'
+            return f"{action} {role} '{name}'"
+
+        # page.get_by_text("Continue").click()
+        match = re.search(r'get_by_text\(["\']([^"\']+)["\']', line)
+        if match:
+            text = match.group(1)
+            action = 'click' if '.click(' in line else 'action'
+            return f"{action} text '{text}'"
+
+        # page.get_by_placeholder("Enter name").fill(value)
+        match = re.search(r'get_by_placeholder\(["\']([^"\']+)["\']', line)
+        if match:
+            placeholder = match.group(1)
+            return f"fill placeholder '{placeholder}'"
+
+        # page.locator("#id").click()
+        match = re.search(r'locator\(["\']([^"\']+)["\']', line)
+        if match:
+            selector = match.group(1)
+            action = 'click' if '.click(' in line else 'fill' if '.fill(' in line else 'action'
+            return f"{action} '{selector}'"
+
+        # Default: show the method being called
+        if '.click(' in line:
+            return "click element"
+        elif '.fill(' in line:
+            return "fill field"
+        elif '.select_option(' in line:
+            return "select option"
+        elif '.check(' in line:
+            return "check checkbox"
+
+        return "action"
+
+    def _generate_main_iteration(self, user_code: str, network_capture_patterns: List = None) -> str:
+        # Clean user code from Playwright Recorder boilerplate
+        cleaned_code = self._clean_user_code(user_code)
+
+        # 🌐 Generate network response capture code if patterns are provided
+        network_capture_code = ""
+        csv_append_code = ""
+
+        if network_capture_patterns and len(network_capture_patterns) > 0:
+            patterns_str = json.dumps(network_capture_patterns, ensure_ascii=False)
+            network_capture_code = f'''
+        # ============================================================
+        # 🌐 ЗАХВАТ NETWORK RESPONSES (Developer Tools) + ИЗВЛЕЧЕНИЕ ПОЛЕЙ
+        # ============================================================
+        captured_data = {{}}
+        extracted_fields = {{}}  # Словарь для извлеченных полей: {{field_name: value}}
+        capture_patterns_config = {patterns_str}
+
+        def get_nested_value(data, field_path):
+            """
+            Извлекает значение по пути field.subfield.subsubfield
+            Поддерживает массивы: field.array.0.subfield
+            """
+            keys = field_path.split('.')
+            value = data
+            for key in keys:
+                # Проверяем, является ли ключ числовым индексом для массива
+                if isinstance(value, list):
+                    try:
+                        index = int(key)
+                        if 0 <= index < len(value):
+                            value = value[index]
+                        else:
+                            return None
+                    except ValueError:
+                        return None
+                elif isinstance(value, dict) and key in value:
+                    value = value[key]
+                else:
+                    return None
+            return value
+
+        def handle_response(response):
+            """Обработчик network responses - перехватывает данные и извлекает указанные поля"""
+            try:
+                url = response.url
+                # Проверяем каждый паттерн из конфига
+                for pattern_config in capture_patterns_config:
+                    pattern = pattern_config.get('pattern', '')
+                    fields = pattern_config.get('fields', [])
+
+                    if pattern.lower() in url.lower():
+                        print(f"[NETWORK_CAPTURE] Перехвачен ответ: {{url}}", flush=True)
+                        try:
+                            # Получаем JSON данные из ответа
+                            json_data = response.json()
+
+                            # Сохраняем полные данные для отладки
+                            if pattern not in captured_data:
+                                captured_data[pattern] = []
+                            captured_data[pattern].append({{
+                                'url': url,
+                                'status': response.status,
+                                'data': json_data
+                            }})
+
+                            # 🔥 ИЗВЛЕЧЕНИЕ КОНКРЕТНЫХ ПОЛЕЙ
+                            if fields:
+                                print(f"[NETWORK_CAPTURE] Извлекаю поля: {{fields}}", flush=True)
+                                for field in fields:
+                                    field_value = get_nested_value(json_data, field)
+                                    if field_value is not None:
+                                        extracted_fields[field] = field_value
+                                        print(f"[NETWORK_CAPTURE]   {{field}} = {{field_value}}", flush=True)
+                                    else:
+                                        print(f"[NETWORK_CAPTURE]   {{field}} не найдено в response", flush=True)
+                            else:
+                                # Если полей нет - сохраняем весь response
+                                print(f"[NETWORK_CAPTURE] Полный response сохранен для '{{pattern}}'", flush=True)
+                                print(f"[NETWORK_CAPTURE] Preview: {{str(json_data)[:200]}}...", flush=True)
+                        except Exception as e:
+                            print(f"[NETWORK_CAPTURE] Не удалось распарсить JSON: {{e}}", flush=True)
+                        break
+            except Exception as e:
+                # Игнорируем ошибки при обработке - не должны ломать основной флоу
+                pass
+
+        # Регистрируем обработчик для всех network responses
+        page.on("response", handle_response)
+        print("[NETWORK_CAPTURE] Обработчик зарегистрирован", flush=True)
+        print(f"[NETWORK_CAPTURE] Паттерны и поля: {{capture_patterns_config}}", flush=True)
+'''
+
+            # 🔥 ГЕНЕРАЦИЯ КОДА ДОБАВЛЕНИЯ В CSV
+            csv_append_code = '''
+        # 🌐 Добавление извлеченных полей в CSV
+        if extracted_fields:
+            print(f"\\n[CSV_APPEND] Добавляю извлеченные поля в CSV...", flush=True)
+            try:
+                csv_path = 'data.csv'  # Путь к CSV файлу
+
+                # Читаем существующий CSV
+                import csv
+                import os
+
+                if os.path.exists(csv_path):
+                    with open(csv_path, 'r', encoding='utf-8') as f:
+                        reader = csv.DictReader(f)
+                        rows = list(reader)
+                        headers = reader.fieldnames if reader.fieldnames else []
+
+                    # Добавляем новые заголовки для извлеченных полей (если их еще нет)
+                    new_headers = list(headers)
+                    for field_name in extracted_fields.keys():
+                        if field_name not in new_headers:
+                            new_headers.append(field_name)
+                            print(f"[CSV_APPEND] Добавлена новая колонка: {field_name}", flush=True)
+
+                    # Обновляем текущую строку (iteration_number - 1, т.к. индекс с 0)
+                    row_index = iteration_number - 1
+                    if 0 <= row_index < len(rows):
+                        for field_name, field_value in extracted_fields.items():
+                            rows[row_index][field_name] = str(field_value)
+                            print(f"[CSV_APPEND] Строка {iteration_number}: {field_name} = {field_value}", flush=True)
+
+                    # Записываем обновленный CSV
+                    with open(csv_path, 'w', encoding='utf-8', newline='') as f:
+                        writer = csv.DictWriter(f, fieldnames=new_headers)
+                        writer.writeheader()
+                        writer.writerows(rows)
+
+                    print(f"[CSV_APPEND] ✅ CSV обновлен: {len(extracted_fields)} полей добавлено", flush=True)
+                else:
+                    print(f"[CSV_APPEND] ⚠️ CSV файл не найден: {csv_path}", flush=True)
+            except Exception as e:
+                print(f"[CSV_APPEND] ❌ Ошибка записи в CSV: {e}", flush=True)
+'''
+
+        return f'''# ============================================================
+# ОСНОВНАЯ ФУНКЦИЯ ИТЕРАЦИИ
+# ============================================================
+
+def run_iteration(page, data_row: Dict, iteration_number: int):
+    """
+    Запуск одной итерации автоматизации
+
+    Args:
+        page: Playwright page (уже подключен к Octobrowser через CDP)
+        data_row: Данные из CSV (Field 1, Field 2, ...)
+        iteration_number: Номер итерации
+    """
+    print(f"\\n{'='*60}")
+    print(f"[ITERATION {{iteration_number}}] Начало")
+    print(f"{'='*60}")
+
+    try:{network_capture_code}
+        # ============================================================
+        # ДЕЙСТВИЯ ПОЛЬЗОВАТЕЛЯ (очищены от Playwright boilerplate)
+        # ============================================================
+{self._indent_code(cleaned_code, 8)}
+{csv_append_code}
+        # 🌐 Вывод захваченных данных (если есть)
+        if 'captured_data' in locals() and captured_data:
+            print(f"\\n[NETWORK_CAPTURE] === ИТОГОВЫЕ ДАННЫЕ ===")
+            for pattern, entries in captured_data.items():
+                print(f"[NETWORK_CAPTURE] Паттерн '{{pattern}}': {{len(entries)}} ответов")
+                for i, entry in enumerate(entries, 1):
+                    print(f"[NETWORK_CAPTURE]   {{i}}. URL: {{entry['url']}}")
+                    print(f"[NETWORK_CAPTURE]      Status: {{entry['status']}}")
+                    print(f"[NETWORK_CAPTURE]      Data keys: {{list(entry['data'].keys()) if isinstance(entry['data'], dict) else 'Not a dict'}}")
+
+        print(f"[ITERATION {{iteration_number}}] [OK] Завершено успешно")
+        return True
+
+    except Exception as e:
+        print(f"[ITERATION {{iteration_number}}] [ERROR] Ошибка: {{e}}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+'''
+
+    def _generate_worker_function(self) -> str:
+        """Генерирует worker функцию для обработки одной задачи в потоке"""
+        return '''# ============================================================
+# WORKER ФУНКЦИЯ (для многопоточности)
+# ============================================================
+
+def process_task(task_data: tuple) -> Dict:
+    """
+    Обработать одну задачу (итерацию) в отдельном потоке
+
+    Args:
+        task_data: Tuple (thread_id, iteration_number, data_row, total_count)
+
+    Returns:
+        Dict с результатом выполнения
+    """
+    thread_id, iteration_number, data_row, total_count = task_data
+
+    print(f"\\n{'#'*60}")
+    print(f"# THREAD {thread_id} | ROW {iteration_number}/{total_count}")
+    print(f"{'#'*60}")
+
+    profile_uuid = None
+    result = {
+        'thread_id': thread_id,
+        'iteration': iteration_number,
+        'success': False,
+        'error': None
+    }
+
+    try:
+        # 🔥 ПОЛУЧИТЬ ПРОКСИ ДЛЯ ПОТОКА
+        proxy_dict = get_proxy_for_thread(thread_id, iteration_number)
+
+        # Создание профиля через API
+        profile_title = f"Auto Profile T{thread_id} #{iteration_number}"
+        print(f"[THREAD {thread_id}] Создание профиля: {profile_title}")
+        profile_uuid = create_profile(profile_title, proxy_dict)
+
+        if not profile_uuid:
+            print(f"[THREAD {thread_id}] [ERROR] Не удалось создать профиль")
+            result['error'] = "Profile creation failed"
+            return result
+
+        print(f"[THREAD {thread_id}] UUID: {profile_uuid}")
+
+        # Ожидание синхронизации профиля с локальным Octobrowser
+        print(f"[THREAD {thread_id}] Ожидание синхронизации (5 сек)...")
+        time.sleep(5)
+
+        # Запуск профиля
+        print(f"[THREAD {thread_id}] Запуск профиля...")
+        start_data = start_profile(profile_uuid)
+
+        if not start_data:
+            print(f"[THREAD {thread_id}] [ERROR] Не удалось запустить профиль")
+            result['error'] = "Profile start failed"
+            return result
+
+        debug_url = start_data.get('ws_endpoint')
+        if not debug_url:
+            print(f"[THREAD {thread_id}] [ERROR] Нет CDP endpoint")
+            result['error'] = "No CDP endpoint"
+            return result
+
+        print(f"[THREAD {thread_id}] [OK] CDP endpoint получен")
+
+        # Подключение через Playwright CDP
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.connect_over_cdp(debug_url)
+            context = browser.contexts[0]
+            page = context.pages[0]
+
+            page.set_default_timeout(DEFAULT_TIMEOUT)
+            page.set_default_navigation_timeout(NAVIGATION_TIMEOUT)
+
+            # Запуск итерации
+            iteration_result = run_iteration(page, data_row, iteration_number)
+
+            if iteration_result:
+                result['success'] = True
+            else:
+                result['error'] = "Iteration failed"
+
+            # Пауза перед закрытием
+            time.sleep(2)
+
+            browser.close()
+
+        print(f"[THREAD {thread_id}] Остановка профиля")
+        stop_profile(profile_uuid)
+
+    except Exception as e:
+        print(f"[THREAD {thread_id}] [ERROR] Критическая ошибка: {e}")
+        import traceback
+        traceback.print_exc()
+        result['error'] = str(e)
+
+    finally:
+        if profile_uuid:
+            time.sleep(1)
+
+    return result
+
+
+'''
+
+    def _generate_main_function(self) -> str:
+        return '''# ============================================================
+# ГЛАВНАЯ ФУНКЦИЯ (с многопоточностью)
+# ============================================================
+
+def main():
+    """Главная функция запуска через Octobrowser API с многопоточностью"""
+    print("[MAIN] Запуск автоматизации через Octobrowser API...")
+    print(f"[MAIN] API Token: {API_TOKEN[:10]}..." if API_TOKEN else "[MAIN] [!] API Token отсутствует!")
+    print(f"[MAIN] Потоков: {THREADS_COUNT}")
+
+    # Прокси информация
+    if USE_PROXY_LIST:
+        print(f"[MAIN] ПРОКСИ: {len(PROXY_LIST)} прокси, режим ротации: {PROXY_ROTATION_MODE}")
+        for i, proxy in enumerate(PROXY_LIST, 1):
+            proxy_dict = parse_proxy_string(proxy)
+            if proxy_dict:
+                print(f"[MAIN]    {i}. {proxy_dict['type']}://{proxy_dict['host']}:{proxy_dict['port']}")
+    elif USE_PROXY:
+        print(f"[MAIN] ПРОКСИ (одиночный): {PROXY_TYPE}://{PROXY_HOST}:{PROXY_PORT}")
+    else:
+        print("[MAIN] [!] ПРОКСИ НЕ ВКЛЮЧЕН!")
+
+    # Проверка доступности локального Octobrowser
+    if not check_local_api():
+        print("[MAIN] [ERROR] Локальный Octobrowser недоступен!")
+        print("[MAIN] [!] Запустите Octobrowser и убедитесь, что он работает на http://localhost:58888")
+        return
+
+    # Загрузка CSV
+    csv_data = load_csv_data()
+    print(f"[MAIN] Загружено {len(csv_data)} строк данных")
+
+    if not csv_data:
+        print("[ERROR] Нет данных для обработки")
+        return
+
+    # Подготовка задач для потоков
+    tasks = []
+    for iteration_number, data_row in enumerate(csv_data, 1):
+        # thread_id будет назначен при выполнении
+        # Пока используем номер итерации как ID
+        thread_id = (iteration_number - 1) % THREADS_COUNT + 1
+        task_data = (thread_id, iteration_number, data_row, len(csv_data))
+        tasks.append(task_data)
+
+    # Ограничить количество потоков количеством задач
+    actual_threads = min(THREADS_COUNT, len(csv_data))
+    print(f"\\n[MAIN] Запуск {len(tasks)} задач в {actual_threads} потоках...")
+    if actual_threads < THREADS_COUNT:
+        print(f"[MAIN] [INFO] Потоков ограничено до {actual_threads} (количество строк CSV)")
+    print(f"[MAIN] {'='*60}")
+
+    # Запуск многопоточной обработки
+    success_count = 0
+    fail_count = 0
+    results = []
+
+    with ThreadPoolExecutor(max_workers=actual_threads) as executor:
+        # Отправить все задачи в пул
+        future_to_task = {executor.submit(process_task, task): task for task in tasks}
+
+        # Обработка результатов по мере завершения
+        for future in as_completed(future_to_task):
+            task_data = future_to_task[future]
+            try:
+                result = future.result()
+                results.append(result)
+
+                if result['success']:
+                    success_count += 1
+                    print(f"[MAIN] [OK] Итерация {result['iteration']} завершена успешно")
+                else:
+                    fail_count += 1
+                    print(f"[MAIN] [ERROR] Итерация {result['iteration']} завершена с ошибкой: {result.get('error', 'Unknown')}")
+
+            except Exception as e:
+                fail_count += 1
+                print(f"[MAIN] [ERROR] Ошибка выполнения задачи: {e}")
+                import traceback
+                traceback.print_exc()
+
+    # Итоговая статистика
+    print(f"\\n{'='*60}")
+    print(f"[MAIN] ЗАВЕРШЕНО")
+    print(f"[MAIN] Успешно: {success_count}/{len(csv_data)}")
+    print(f"[MAIN] Ошибок: {fail_count}/{len(csv_data)}")
+    print(f"[MAIN] Использовано потоков: {actual_threads}/{THREADS_COUNT}")
+    if USE_PROXY_LIST:
+        print(f"[MAIN] Использовано прокси: {len(PROXY_LIST)} ({PROXY_ROTATION_MODE})")
+    print(f"{'='*60}")
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+    def _indent_code(self, code: str, spaces: int) -> str:
+        """Добавить отступы к коду"""
+        indent = ' ' * spaces
+        lines = code.split('\n')
+        return '\n'.join(indent + line if line.strip() else '' for line in lines)
