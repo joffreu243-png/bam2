@@ -566,50 +566,247 @@ class BrowserAutomatorApp:
     def _build_settings_tab(self):
         """Build the settings tab"""
         with ui.scroll_area().classes('w-full h-full'):
-            with ui.column().classes('w-full gap-6').style('padding: 20px; max-width: 800px;'):
-                # API Settings
+            with ui.column().classes('w-full gap-6').style('padding: 20px; max-width: 1000px;'):
+                # === OCTOBROWSER API ===
                 with ui.column().classes('hitech-card w-full gap-4').style('padding: 20px;'):
                     ui.label('⚙️ OCTOBROWSER API').style('color: #00d4ff; font-weight: 600; letter-spacing: 1px;')
 
-                    ui.label('API Token').style('color: #8888a0; font-size: 12px;')
-                    self.api_token_input = ui.input(
-                        value=self.config.get('octobrowser', {}).get('api_token', ''),
-                        password=True,
-                        placeholder='Enter your API token'
-                    ).classes('hitech-input w-full')
+                    with ui.row().classes('w-full gap-4'):
+                        with ui.column().classes('flex-1 gap-2'):
+                            ui.label('API Token').style('color: #8888a0; font-size: 12px;')
+                            self.api_token_input = ui.input(
+                                value=self.config.get('octobrowser', {}).get('api_token', ''),
+                                password=True,
+                                placeholder='Enter your API token'
+                            ).classes('hitech-input w-full')
+                        with ui.column().classes('flex-1 gap-2'):
+                            ui.label('API Base URL').style('color: #8888a0; font-size: 12px;')
+                            self.api_url_input = ui.input(
+                                value=self.config.get('octobrowser', {}).get('api_base_url', 'https://app.octobrowser.net/api/v2/automation'),
+                                placeholder='API Base URL'
+                            ).classes('hitech-input w-full')
 
                     with ui.row().classes('gap-2'):
-                        ui.button('💾 Save', on_click=self.save_api_settings).classes('hitech-btn-primary')
+                        ui.button('💾 Save API', on_click=self.save_api_settings).classes('hitech-btn-primary')
                         ui.button('🔗 Test Connection', on_click=self.test_api_connection).classes('hitech-btn')
 
-                # Profile Settings
+                # === SMS PROVIDER ===
                 with ui.column().classes('hitech-card w-full gap-4').style('padding: 20px;'):
-                    ui.label('👤 PROFILE SETTINGS').style('color: #00ff88; font-weight: 600; letter-spacing: 1px;')
+                    ui.label('📱 SMS PROVIDER').style('color: #ff66cc; font-weight: 600; letter-spacing: 1px;')
 
                     with ui.row().classes('w-full gap-4'):
                         with ui.column().classes('flex-1 gap-2'):
-                            ui.label('Default Tags').style('color: #8888a0; font-size: 12px;')
-                            ui.input(placeholder='tag1, tag2, tag3').classes('hitech-input w-full')
+                            ui.label('Provider').style('color: #8888a0; font-size: 12px;')
+                            self.sms_provider_select = ui.select(
+                                options=['daisysms', 'smshub', '5sim', 'sms-activate', 'grizzlysms'],
+                                value=self.config.get('sms', {}).get('provider', 'daisysms')
+                            ).classes('hitech-select w-full')
+                        with ui.column().classes('flex-1 gap-2'):
+                            ui.label('API Key').style('color: #8888a0; font-size: 12px;')
+                            self.sms_api_key_input = ui.input(
+                                value=self.config.get('sms', {}).get('api_key', ''),
+                                password=True,
+                                placeholder='SMS API Key'
+                            ).classes('hitech-input w-full')
+                        with ui.column().classes('flex-1 gap-2'):
+                            ui.label('Service Code').style('color: #8888a0; font-size: 12px;')
+                            self.sms_service_input = ui.input(
+                                value=self.config.get('sms', {}).get('service', 'ds'),
+                                placeholder='Service code (ds, go, etc.)'
+                            ).classes('hitech-input w-full')
+
+                # === PROXY SETTINGS ===
+                with ui.column().classes('hitech-card w-full gap-4').style('padding: 20px;'):
+                    ui.label('🌐 PROXY SETTINGS').style('color: #00ff88; font-weight: 600; letter-spacing: 1px;')
+
+                    with ui.row().classes('w-full gap-4 items-center'):
+                        self.proxy_enabled_checkbox = ui.checkbox(
+                            'Enable Proxy',
+                            value=self.config.get('proxy', {}).get('enabled', False)
+                        ).style('color: #e0e0e5;')
+
+                        with ui.column().classes('flex-1 gap-2'):
+                            ui.label('Proxy Type').style('color: #8888a0; font-size: 12px;')
+                            self.proxy_type_select = ui.select(
+                                options=['http', 'https', 'socks5'],
+                                value=self.config.get('proxy', {}).get('type', 'http')
+                            ).classes('hitech-select w-full')
+
+                    with ui.row().classes('w-full gap-4'):
+                        with ui.column().classes('flex-1 gap-2'):
+                            ui.label('Host').style('color: #8888a0; font-size: 12px;')
+                            self.proxy_host_input = ui.input(
+                                value=self.config.get('proxy', {}).get('host', ''),
+                                placeholder='proxy.example.com'
+                            ).classes('hitech-input w-full')
+                        with ui.column().classes('w-24 gap-2'):
+                            ui.label('Port').style('color: #8888a0; font-size: 12px;')
+                            self.proxy_port_input = ui.input(
+                                value=self.config.get('proxy', {}).get('port', ''),
+                                placeholder='8080'
+                            ).classes('hitech-input w-full')
+                        with ui.column().classes('flex-1 gap-2'):
+                            ui.label('Login').style('color: #8888a0; font-size: 12px;')
+                            self.proxy_login_input = ui.input(
+                                value=self.config.get('proxy', {}).get('login', ''),
+                                placeholder='username'
+                            ).classes('hitech-input w-full')
+                        with ui.column().classes('flex-1 gap-2'):
+                            ui.label('Password').style('color: #8888a0; font-size: 12px;')
+                            self.proxy_password_input = ui.input(
+                                value=self.config.get('proxy', {}).get('password', ''),
+                                password=True,
+                                placeholder='password'
+                            ).classes('hitech-input w-full')
+
+                    ui.label('Proxy List (one per line: host:port:user:pass)').style('color: #8888a0; font-size: 12px;')
+                    self.proxy_list_input = ui.textarea(
+                        value='\n'.join(self.config.get('proxy_list', {}).get('proxies', [])),
+                        placeholder='proxy1:8080:user:pass\nproxy2:8080:user:pass'
+                    ).classes('hitech-code w-full').style('height: 100px;')
+
+                    with ui.row().classes('w-full gap-4 items-center'):
+                        ui.label('Rotation Mode:').style('color: #8888a0; font-size: 12px;')
+                        self.proxy_rotation_select = ui.select(
+                            options=['sequential', 'random'],
+                            value=self.config.get('proxy_list', {}).get('rotation_mode', 'sequential')
+                        ).classes('hitech-select')
+                        self.proxy_retry_checkbox = ui.checkbox(
+                            'Retry on Failure',
+                            value=self.config.get('proxy_list', {}).get('retry_on_failure', True)
+                        ).style('color: #e0e0e5;')
+
+                # === HUMANIZE SETTINGS ===
+                with ui.column().classes('hitech-card w-full gap-4').style('padding: 20px;'):
+                    ui.label('🤖 HUMANIZE / TIMING').style('color: #ffcc00; font-weight: 600; letter-spacing: 1px;')
+
+                    with ui.row().classes('w-full gap-4'):
+                        with ui.column().classes('flex-1 gap-2'):
+                            ui.label('Typing Delay Min (ms)').style('color: #8888a0; font-size: 12px;')
+                            self.typing_min_input = ui.number(
+                                value=self.config.get('humanize', {}).get('typing_delay_min', 50),
+                                min=10, max=500
+                            ).classes('hitech-input w-full')
+                        with ui.column().classes('flex-1 gap-2'):
+                            ui.label('Typing Delay Max (ms)').style('color: #8888a0; font-size: 12px;')
+                            self.typing_max_input = ui.number(
+                                value=self.config.get('humanize', {}).get('typing_delay_max', 150),
+                                min=50, max=1000
+                            ).classes('hitech-input w-full')
+                        with ui.column().classes('flex-1 gap-2'):
+                            ui.label('Click Delay (ms)').style('color: #8888a0; font-size: 12px;')
+                            self.click_delay_input = ui.number(
+                                value=self.config.get('humanize', {}).get('click_delay', 500),
+                                min=100, max=3000
+                            ).classes('hitech-input w-full')
+
+                    with ui.row().classes('w-full gap-4'):
+                        with ui.column().classes('flex-1 gap-2'):
+                            ui.label('Page Load Timeout (s)').style('color: #8888a0; font-size: 12px;')
+                            self.page_timeout_input = ui.number(
+                                value=self.config.get('humanize', {}).get('page_timeout', 30),
+                                min=5, max=120
+                            ).classes('hitech-input w-full')
+                        with ui.column().classes('flex-1 gap-2'):
+                            ui.label('Action Timeout (s)').style('color: #8888a0; font-size: 12px;')
+                            self.action_timeout_input = ui.number(
+                                value=self.config.get('humanize', {}).get('action_timeout', 10),
+                                min=1, max=60
+                            ).classes('hitech-input w-full')
+                        with ui.column().classes('flex-1 gap-2'):
+                            ui.label('Random Delay Range (ms)').style('color: #8888a0; font-size: 12px;')
+                            self.random_delay_input = ui.number(
+                                value=self.config.get('humanize', {}).get('random_delay', 1000),
+                                min=0, max=5000
+                            ).classes('hitech-input w-full')
+
+                    with ui.row().classes('w-full gap-4'):
+                        self.humanize_mouse_checkbox = ui.checkbox(
+                            'Humanize Mouse Movement',
+                            value=self.config.get('humanize', {}).get('mouse_movement', True)
+                        ).style('color: #e0e0e5;')
+                        self.humanize_scroll_checkbox = ui.checkbox(
+                            'Random Scrolling',
+                            value=self.config.get('humanize', {}).get('random_scroll', False)
+                        ).style('color: #e0e0e5;')
+
+                # === PROFILE SETTINGS ===
+                with ui.column().classes('hitech-card w-full gap-4').style('padding: 20px;'):
+                    ui.label('👤 PROFILE DEFAULTS').style('color: #00d4ff; font-weight: 600; letter-spacing: 1px;')
+
+                    with ui.row().classes('w-full gap-4'):
+                        with ui.column().classes('flex-1 gap-2'):
+                            ui.label('Default Tags (comma-separated)').style('color: #8888a0; font-size: 12px;')
+                            self.default_tags_input = ui.input(
+                                value=', '.join(self.config.get('octo_defaults', {}).get('tags', [])),
+                                placeholder='tag1, tag2, tag3'
+                            ).classes('hitech-input w-full')
                         with ui.column().classes('flex-1 gap-2'):
                             ui.label('Profile Notes').style('color: #8888a0; font-size: 12px;')
-                            ui.input(placeholder='Auto-generated profile').classes('hitech-input w-full')
+                            self.default_notes_input = ui.input(
+                                value=self.config.get('octo_defaults', {}).get('notes', ''),
+                                placeholder='Auto-generated profile'
+                            ).classes('hitech-input w-full')
 
-                # Fingerprint Settings
+                # === FINGERPRINT SETTINGS ===
                 with ui.column().classes('hitech-card w-full gap-4').style('padding: 20px;'):
-                    ui.label('🎭 FINGERPRINT').style('color: #ffcc00; font-weight: 600; letter-spacing: 1px;')
+                    ui.label('🎭 FINGERPRINT').style('color: #ff9900; font-weight: 600; letter-spacing: 1px;')
 
                     with ui.row().classes('w-full gap-4'):
                         with ui.column().classes('flex-1 gap-2'):
                             ui.label('Operating System').style('color: #8888a0; font-size: 12px;')
-                            ui.select(options=['Windows', 'macOS', 'Linux'], value='Windows').classes('hitech-select w-full')
+                            self.fp_os_select = ui.select(
+                                options=['win', 'mac', 'linux'],
+                                value=self.config.get('fingerprint', {}).get('os', 'win')
+                            ).classes('hitech-select w-full')
                         with ui.column().classes('flex-1 gap-2'):
-                            ui.label('WebRTC').style('color: #8888a0; font-size: 12px;')
-                            ui.select(options=['Altered', 'Disabled', 'Real'], value='Altered').classes('hitech-select w-full')
+                            ui.label('WebRTC Mode').style('color: #8888a0; font-size: 12px;')
+                            self.fp_webrtc_select = ui.select(
+                                options=['altered', 'disabled', 'real'],
+                                value=self.config.get('fingerprint', {}).get('webrtc', 'altered')
+                            ).classes('hitech-select w-full')
 
                     with ui.row().classes('w-full gap-4'):
-                        ui.checkbox('Canvas Protection', value=True).style('color: #e0e0e5;')
-                        ui.checkbox('WebGL Protection', value=True).style('color: #e0e0e5;')
-                        ui.checkbox('Fonts Protection', value=True).style('color: #e0e0e5;')
+                        self.fp_canvas_checkbox = ui.checkbox(
+                            'Canvas Protection',
+                            value=self.config.get('fingerprint', {}).get('canvas_protection', True)
+                        ).style('color: #e0e0e5;')
+                        self.fp_webgl_checkbox = ui.checkbox(
+                            'WebGL Protection',
+                            value=self.config.get('fingerprint', {}).get('webgl_protection', True)
+                        ).style('color: #e0e0e5;')
+                        self.fp_fonts_checkbox = ui.checkbox(
+                            'Fonts Protection',
+                            value=self.config.get('fingerprint', {}).get('fonts_protection', True)
+                        ).style('color: #e0e0e5;')
+
+                # === GEOLOCATION ===
+                with ui.column().classes('hitech-card w-full gap-4').style('padding: 20px;'):
+                    ui.label('📍 GEOLOCATION').style('color: #66ccff; font-weight: 600; letter-spacing: 1px;')
+
+                    with ui.row().classes('w-full gap-4 items-center'):
+                        self.geo_enabled_checkbox = ui.checkbox(
+                            'Enable Custom Geolocation',
+                            value=self.config.get('geolocation', {}).get('enabled', False)
+                        ).style('color: #e0e0e5;')
+
+                    with ui.row().classes('w-full gap-4'):
+                        with ui.column().classes('flex-1 gap-2'):
+                            ui.label('Latitude').style('color: #8888a0; font-size: 12px;')
+                            self.geo_lat_input = ui.input(
+                                value=self.config.get('geolocation', {}).get('latitude', ''),
+                                placeholder='40.7128'
+                            ).classes('hitech-input w-full')
+                        with ui.column().classes('flex-1 gap-2'):
+                            ui.label('Longitude').style('color: #8888a0; font-size: 12px;')
+                            self.geo_lon_input = ui.input(
+                                value=self.config.get('geolocation', {}).get('longitude', ''),
+                                placeholder='-74.0060'
+                            ).classes('hitech-input w-full')
+
+                # === SAVE ALL BUTTON ===
+                with ui.row().classes('w-full justify-center gap-4'):
+                    ui.button('💾 SAVE ALL SETTINGS', on_click=self.save_all_settings).classes('hitech-btn-primary').style('height: 50px; padding: 0 40px; font-size: 14px;')
 
     def _build_logs_tab(self):
         """Build the logs tab"""
@@ -679,6 +876,73 @@ class BrowserAutomatorApp:
                 ui.linear_progress(value=progress).classes('hitech-progress w-full').style('margin-top: 8px;')
 
     # ========== Action Methods ==========
+
+    def save_all_settings(self):
+        """Save all settings to config"""
+        try:
+            # Octobrowser API
+            self.config.setdefault('octobrowser', {})
+            self.config['octobrowser']['api_token'] = self.api_token_input.value
+            self.config['octobrowser']['api_base_url'] = self.api_url_input.value
+
+            # SMS Provider
+            self.config.setdefault('sms', {})
+            self.config['sms']['provider'] = self.sms_provider_select.value
+            self.config['sms']['api_key'] = self.sms_api_key_input.value
+            self.config['sms']['service'] = self.sms_service_input.value
+
+            # Proxy Settings
+            self.config.setdefault('proxy', {})
+            self.config['proxy']['enabled'] = self.proxy_enabled_checkbox.value
+            self.config['proxy']['type'] = self.proxy_type_select.value
+            self.config['proxy']['host'] = self.proxy_host_input.value
+            self.config['proxy']['port'] = self.proxy_port_input.value
+            self.config['proxy']['login'] = self.proxy_login_input.value
+            self.config['proxy']['password'] = self.proxy_password_input.value
+
+            # Proxy List
+            self.config.setdefault('proxy_list', {})
+            proxy_lines = [line.strip() for line in self.proxy_list_input.value.split('\n') if line.strip()]
+            self.config['proxy_list']['proxies'] = proxy_lines
+            self.config['proxy_list']['rotation_mode'] = self.proxy_rotation_select.value
+            self.config['proxy_list']['retry_on_failure'] = self.proxy_retry_checkbox.value
+
+            # Humanize Settings
+            self.config.setdefault('humanize', {})
+            self.config['humanize']['typing_delay_min'] = int(self.typing_min_input.value or 50)
+            self.config['humanize']['typing_delay_max'] = int(self.typing_max_input.value or 150)
+            self.config['humanize']['click_delay'] = int(self.click_delay_input.value or 500)
+            self.config['humanize']['page_timeout'] = int(self.page_timeout_input.value or 30)
+            self.config['humanize']['action_timeout'] = int(self.action_timeout_input.value or 10)
+            self.config['humanize']['random_delay'] = int(self.random_delay_input.value or 1000)
+            self.config['humanize']['mouse_movement'] = self.humanize_mouse_checkbox.value
+            self.config['humanize']['random_scroll'] = self.humanize_scroll_checkbox.value
+
+            # Profile Defaults
+            self.config.setdefault('octo_defaults', {})
+            tags = [t.strip() for t in self.default_tags_input.value.split(',') if t.strip()]
+            self.config['octo_defaults']['tags'] = tags
+            self.config['octo_defaults']['notes'] = self.default_notes_input.value
+
+            # Fingerprint
+            self.config.setdefault('fingerprint', {})
+            self.config['fingerprint']['os'] = self.fp_os_select.value
+            self.config['fingerprint']['webrtc'] = self.fp_webrtc_select.value
+            self.config['fingerprint']['canvas_protection'] = self.fp_canvas_checkbox.value
+            self.config['fingerprint']['webgl_protection'] = self.fp_webgl_checkbox.value
+            self.config['fingerprint']['fonts_protection'] = self.fp_fonts_checkbox.value
+
+            # Geolocation
+            self.config.setdefault('geolocation', {})
+            self.config['geolocation']['enabled'] = self.geo_enabled_checkbox.value
+            self.config['geolocation']['latitude'] = self.geo_lat_input.value
+            self.config['geolocation']['longitude'] = self.geo_lon_input.value
+
+            # Save to file
+            self.save_config()
+            ui.notify('All settings saved successfully!', type='positive')
+        except Exception as e:
+            ui.notify(f'Error saving settings: {e}', type='negative')
 
     def run_script(self, test: bool = False):
         """Run the automation script"""
