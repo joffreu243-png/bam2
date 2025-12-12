@@ -44,6 +44,13 @@ class Generator:
         """
         api_token = config.get('api_token', '')
 
+        # 🔥 Browser Mode: 'local_chromium' или 'octobrowser_api'
+        self.browser_mode = config.get('browser_mode', 'octobrowser_api')
+        self.headless = config.get('headless', False)
+
+        print(f"[GENERATOR] Browser Mode: {self.browser_mode}")
+        print(f"[GENERATOR] Headless: {self.headless}")
+
         # 🔥 Защита от передачи строк вместо словарей
         proxy_config = config.get('proxy', {})
         if not isinstance(proxy_config, dict):
@@ -106,14 +113,26 @@ class Generator:
                                         disposable_profiles)
         script += self._generate_proxy_rotation()
         script += self._generate_nine_proxy_rotation()  # 🔥 9Proxy функция ротации
-        script += self._generate_octobrowser_functions(profile_config)
+
+        # 🔥 Условная генерация: Octobrowser API или Local Chromium
+        if self.browser_mode == 'local_chromium':
+            script += self._generate_local_chromium_functions()
+        else:
+            script += self._generate_octobrowser_functions(profile_config)
+
         script += self._generate_helpers()
         script += self._generate_csv_loader()
         script += self._generate_questions_pool(questions_pool)  # 🔥 СЛОВАРЬ ВОПРОСОВ
         script += self._generate_answer_question_function()  # 🔥 ФУНКЦИЯ ПОИСКА И ОТВЕТА
         script += self._generate_main_iteration(pre_questions_code, post_questions_code, network_capture_patterns)
-        script += self._generate_worker_function()
-        script += self._generate_main_function()
+
+        # 🔥 Worker функция зависит от режима браузера
+        if self.browser_mode == 'local_chromium':
+            script += self._generate_local_chromium_worker_function()
+            script += self._generate_local_chromium_main_function()
+        else:
+            script += self._generate_worker_function()
+            script += self._generate_main_function()
 
         return script
 
@@ -463,7 +482,15 @@ from typing import Dict, List, Optional
 # КОНФИГУРАЦИЯ
 # ============================================================
 
-# Octobrowser API
+# 🔥 Browser Mode: 'local_chromium' или 'octobrowser_api'
+BROWSER_MODE = "{self.browser_mode}"
+HEADLESS = {self.headless}
+
+'''
+
+        # Octobrowser API конфиг только для octobrowser режима
+        if self.browser_mode != 'local_chromium':
+            config += f'''# Octobrowser API
 API_BASE_URL = "https://app.octobrowser.net/api/v2/automation"
 API_TOKEN = "{api_token}"
 LOCAL_API_URL = "http://localhost:58888/api"
@@ -3069,4 +3096,282 @@ if __name__ == "__main__":
     main()
 '''
 
+    # ============================================================
+    # 🔥 LOCAL CHROMIUM MODE - Чистый Playwright без Octobrowser API
+    # ============================================================
+
+    def _generate_local_chromium_functions(self) -> str:
+        """Генерирует заглушки для Local Chromium режима (не нужны Octobrowser функции)"""
+        return '''# ============================================================
+# LOCAL CHROMIUM MODE - Функции браузера
+# ============================================================
+
+def get_proxy_for_playwright(thread_id: int, iteration_number: int) -> Optional[Dict]:
+    """
+    Получить настройки прокси для Playwright в формате:
+    {'server': 'http://host:port', 'username': 'login', 'password': 'pass'}
+    """
+    proxy_dict = get_proxy_for_thread(thread_id, iteration_number)
+
+    if not proxy_dict:
+        return None
+
+    # Формируем прокси для Playwright
+    proxy_type = proxy_dict.get('type', 'http').lower()
+    host = proxy_dict.get('host', '')
+    port = proxy_dict.get('port', '')
+    login = proxy_dict.get('login', '')
+    password = proxy_dict.get('password', '')
+
+    if not host or not port:
+        return None
+
+    playwright_proxy = {
+        'server': f'{proxy_type}://{host}:{port}'
+    }
+
+    if login and password:
+        playwright_proxy['username'] = login
+        playwright_proxy['password'] = password
+
+    return playwright_proxy
+
+'''
+
+    def _generate_local_chromium_worker_function(self) -> str:
+        """Генерирует worker функцию для Local Chromium режима"""
+        return '''# ============================================================
+# WORKER FUNCTION - LOCAL CHROMIUM MODE
+# ============================================================
+
+def process_task(task_data: tuple) -> Dict:
+    """Обработать одну задачу в отдельном потоке (Local Chromium)"""
+    thread_id, iteration_number, data_row, total_count, csv_file_path, fieldnames = task_data
+
+    # Получаем индекс строки в CSV (0-based, не считая заголовок)
+    csv_row_index = data_row.get('__csv_row_index__', 0)
+    display_row_number = csv_row_index + 1  # Для отображения (1-based)
+
+    print(f"\\n{'#'*60}")
+    print(f"# THREAD {thread_id} | ITERATION {iteration_number}/{total_count} | CSV ROW {display_row_number}")
+    print(f"# 🔥 LOCAL CHROMIUM MODE (Headless: {HEADLESS})")
+    print(f"{'#'*60}")
+
+    # Помечаем строку как взятую в работу
+    mark_row_in_progress(csv_file_path, csv_row_index, fieldnames)
+
+    # Задержка для разнесения запусков
+    startup_delay = (thread_id - 1) * 2  # 0s, 2s, 4s...
+    if startup_delay > 0:
+        print(f"[THREAD {thread_id}] Задержка запуска: {startup_delay}s")
+        time.sleep(startup_delay)
+
+    # ========================================
+    # Объявляем ВСЕ переменные ДО try
+    # ========================================
+    browser = None
+    context = None
+    page = None
+    playwright_instance = None
+
+    result = {
+        'thread_id': thread_id,
+        'iteration': iteration_number,
+        'csv_row': display_row_number,
+        'success': False,
+        'error': None
+    }
+
+    try:
+        # 🔥 Получаем прокси для Playwright (если настроен)
+        playwright_proxy = get_proxy_for_playwright(thread_id, iteration_number)
+
+        if playwright_proxy:
+            print(f"[THREAD {thread_id}] Используем прокси: {playwright_proxy['server']}")
+        else:
+            print(f"[THREAD {thread_id}] Прокси не настроен, запуск напрямую")
+
+        # ========================================
+        # 🔥 Запуск ЛОКАЛЬНОГО Chromium через Playwright
+        # ========================================
+        print(f"[THREAD {thread_id}] Запуск локального Chromium...")
+        playwright_instance = sync_playwright().start()
+
+        # Аргументы для браузера
+        browser_args = [
+            '--disable-blink-features=AutomationControlled',
+            '--disable-infobars',
+            '--no-first-run',
+            '--no-default-browser-check',
+        ]
+
+        browser = playwright_instance.chromium.launch(
+            headless=HEADLESS,
+            args=browser_args
+        )
+
+        # Создаем контекст с прокси (если есть)
+        context_options = {
+            'viewport': {'width': 1920, 'height': 1080},
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+
+        if playwright_proxy:
+            context_options['proxy'] = playwright_proxy
+
+        context = browser.new_context(**context_options)
+        page = context.new_page()
+
+        page.set_default_timeout(DEFAULT_TIMEOUT)
+        page.set_default_navigation_timeout(NAVIGATION_TIMEOUT)
+
+        print(f"[THREAD {thread_id}] [OK] Браузер запущен успешно")
+
+        # run_iteration возвращает tuple (success, extracted_fields)
+        iteration_success, extracted_fields = run_iteration(page, data_row, iteration_number)
+
+        if iteration_success:
+            result['success'] = True
+        else:
+            result['error'] = "Iteration failed"
+
+        time.sleep(2)
+
+        # 🔥 Ротация 9Proxy после завершения итерации
+        if NINE_PROXY_ENABLED and NINE_PROXY_PORTS:
+            if NINE_PROXY_AUTO_ROTATE:
+                nine_proxy_dict = get_nine_proxy_for_thread(thread_id)
+                if nine_proxy_dict:
+                    port = int(nine_proxy_dict['port'])
+                    print(f"[9PROXY ROTATION] Rotating port {port}")
+                    rotate_proxy_for_port(port)
+
+        # Итоги обработки
+        if result['success']:
+            print(f"[ITERATION {iteration_number}] [OK] Завершено успешно")
+        else:
+            print(f"[ITERATION {iteration_number}] [FAIL] Завершено с ошибкой: {result.get('error', 'Unknown error')}")
+
+    except Exception as e:
+        print(f"[THREAD {thread_id}] [ERROR] Критическая ошибка: {e}")
+        import traceback
+        traceback.print_exc()
+        result['error'] = str(e)
+
+    finally:
+        # ========================================================
+        # ЗАКРЫТИЕ РЕСУРСОВ
+        # ========================================================
+
+        # 1. Закрыть контекст
+        if context:
+            try:
+                context.close()
+            except:
+                pass
+
+        # 2. Закрыть браузер
+        if browser:
+            try:
+                browser.close()
+                print(f"[THREAD {thread_id}] [OK] Браузер закрыт")
+            except:
+                pass
+
+        # 3. Остановить Playwright instance
+        if playwright_instance:
+            try:
+                playwright_instance.stop()
+            except:
+                pass
+
+    return result
+
+'''
+
+    def _generate_local_chromium_main_function(self) -> str:
+        """Генерирует main функцию для Local Chromium режима"""
+        return '''# ============================================================
+# ГЛАВНАЯ ФУНКЦИЯ - LOCAL CHROMIUM MODE
+# ============================================================
+
+def main():
+    """Главная функция запуска (Local Chromium)"""
+    print("="*60)
+    print("🔥 LOCAL CHROMIUM MODE - Чистый Playwright")
+    print(f"   Headless: {HEADLESS}")
+    print(f"   Потоков: {THREADS_COUNT}")
+    print("="*60)
+
+    # 🔥 Инициализация портов 9Proxy перед началом работы
+    if NINE_PROXY_ENABLED and NINE_PROXY_PORTS:
+        print("\\n" + "="*60)
+        if not initialize_nine_proxy_ports():
+            print("[MAIN] [WARNING] Не удалось инициализировать 9Proxy, продолжаем без него...")
+        print("="*60 + "\\n")
+
+    # Загружаем CSV и получаем отфильтрованные данные
+    csv_file_path, fieldnames, csv_data = load_csv_data()
+
+    if not csv_file_path or not fieldnames:
+        print("[ERROR] Не удалось загрузить CSV файл")
+        return
+
+    print(f"[MAIN] CSV файл: {csv_file_path}")
+    print(f"[MAIN] К обработке: {len(csv_data)} новых строк")
+
+    if not csv_data:
+        print("[MAIN] Нет новых данных для обработки (все строки уже обработаны)")
+        return
+
+    # ПРИМЕНЯЕМ ЛИМИТ ИТЕРАЦИЙ
+    if MAX_ITERATIONS is not None and MAX_ITERATIONS > 0:
+        original_count = len(csv_data)
+        csv_data = csv_data[:MAX_ITERATIONS]
+        print(f"[MAIN] Лимит итераций: {MAX_ITERATIONS}")
+        print(f"[MAIN] Обрабатываем: {len(csv_data)} из {original_count} строк")
+    else:
+        print(f"[MAIN] Лимит итераций: НЕТ (обрабатываем все строки)")
+
+    # Формируем задачи
+    tasks = []
+    for iteration_number, data_row in enumerate(csv_data, 1):
+        thread_id = (iteration_number - 1) % THREADS_COUNT + 1
+        task_data = (thread_id, iteration_number, data_row, len(csv_data), csv_file_path, fieldnames)
+        tasks.append(task_data)
+
+    actual_threads = min(THREADS_COUNT, len(csv_data))
+    print(f"\\n[MAIN] Запуск {len(tasks)} задач в {actual_threads} потоках...")
+
+    success_count = 0
+    fail_count = 0
+
+    with ThreadPoolExecutor(max_workers=actual_threads) as executor:
+        future_to_task = {executor.submit(process_task, task): task for task in tasks}
+
+        for future in as_completed(future_to_task):
+            try:
+                result = future.result()
+
+                if result['success']:
+                    success_count += 1
+                    print(f"[MAIN] [OK] Итерация {result['iteration']} (CSV строка {result['csv_row']}) завершена успешно")
+                else:
+                    fail_count += 1
+                    print(f"[MAIN] [ERROR] Итерация {result['iteration']} (CSV строка {result['csv_row']}) завершена с ошибкой")
+
+            except Exception as e:
+                fail_count += 1
+                print(f"[MAIN] [ERROR] Ошибка: {e}")
+
+    print(f"\\n{'='*60}")
+    print(f"[MAIN] ЗАВЕРШЕНО")
+    print(f"[MAIN] Успешно: {success_count}/{len(csv_data)}")
+    print(f"[MAIN] Ошибок: {fail_count}/{len(csv_data)}")
+    print(f"{'='*60}")
+
+
+if __name__ == "__main__":
+    main()
+'''
 

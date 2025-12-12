@@ -981,15 +981,18 @@ page.goto("https://example.com")
 
         threads_count = 1 if test else int(self.threads_input.value or 1)
         provider_name = self.provider_select.value
-        browser_mode = self.browser_mode_select.value
+        browser_mode_ui = self.browser_mode_select.value
         headless = self.headless_checkbox.value
         user_code = self.code_editor.value
+
+        # Map UI values to generator values
+        browser_mode = 'local_chromium' if browser_mode_ui == 'Local Chromium' else 'octobrowser_api'
 
         if not user_code.strip():
             ui.notify('Please enter automation code first', type='warning')
             return
 
-        self.add_log(f'[System] Browser mode: {browser_mode}')
+        self.add_log(f'[System] Browser mode: {browser_mode_ui} ({browser_mode})')
         self.add_log(f'[System] Provider: {provider_name}')
         self.add_log(f'[System] Threads: {threads_count}')
         self.add_log(f'[System] Headless: {headless}')
