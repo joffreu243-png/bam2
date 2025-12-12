@@ -3970,17 +3970,25 @@ def has_captcha(page) -> str:
     Returns:
         Тип капчи ('recaptcha_v2', 'hcaptcha', 'turnstile') или None
     '''
+    print("[CAPTCHA] 🔍 Checking for captcha on page...", flush=True)
     try:
         html = page.content()
+        print(f"[CAPTCHA] Page content length: {{len(html)}} chars", flush=True)
 
-        if 'g-recaptcha' in html or 'grecaptcha' in html:
+        # Проверяем различные паттерны
+        if 'g-recaptcha' in html or 'grecaptcha' in html or 'recaptcha' in html.lower():
+            print("[CAPTCHA] ✓ Found reCAPTCHA pattern", flush=True)
             return 'recaptcha_v2'
         if 'h-captcha' in html or 'hcaptcha' in html:
+            print("[CAPTCHA] ✓ Found hCaptcha pattern", flush=True)
             return 'hcaptcha'
         if 'cf-turnstile' in html or 'turnstile' in html:
+            print("[CAPTCHA] ✓ Found Turnstile pattern", flush=True)
             return 'turnstile'
-    except:
-        pass
+
+        print("[CAPTCHA] ✗ No captcha patterns found in HTML", flush=True)
+    except Exception as e:
+        print(f"[CAPTCHA] ❌ Error checking page: {{e}}", flush=True)
 
     return None
 
@@ -3999,10 +4007,10 @@ def solve_captcha(page, captcha_type: str = 'auto', timeout: int = CAPSOLVER_TIM
     if captcha_type == 'auto':
         captcha_type = has_captcha(page)
         if not captcha_type:
-            print("[CAPTCHA] ℹ️ No captcha detected on page")
+            print("[CAPTCHA] ℹ️ No captcha detected on page", flush=True)
             return None
 
-    print(f"[CAPTCHA] 🔓 Detected: {{captcha_type}}")
+    print(f"[CAPTCHA] 🔓 Detected: {{captcha_type}}", flush=True)
 
     if captcha_type == 'recaptcha_v2':
         return solve_recaptcha_v2(page, timeout=timeout)
