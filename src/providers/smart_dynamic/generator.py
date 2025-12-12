@@ -3696,6 +3696,7 @@ print("[CAPTCHA] 🔓 CapSolver Anti-Captcha ENABLED")
 
 def _capsolver_create_task(task: dict) -> str:
     '''Создать задачу в CapSolver и получить taskId'''
+    print(f"[CAPTCHA] 📤 Creating task: {{task.get('type')}}", flush=True)
     try:
         response = requests.post(
             'https://api.capsolver.com/createTask',
@@ -3703,17 +3704,23 @@ def _capsolver_create_task(task: dict) -> str:
             timeout=30
         )
         data = response.json()
+        print(f"[CAPTCHA] API response: {{data}}", flush=True)
         if data.get('errorId', 1) != 0:
             raise Exception(data.get('errorDescription', 'Unknown error'))
-        return data.get('taskId')
+        task_id = data.get('taskId')
+        print(f"[CAPTCHA] ✅ Task created: {{task_id}}", flush=True)
+        return task_id
     except Exception as e:
-        print(f"[CAPTCHA] ❌ createTask failed: {{e}}")
+        print(f"[CAPTCHA] ❌ createTask failed: {{e}}", flush=True)
         return None
 
 def _capsolver_get_result(task_id: str, timeout: int = CAPSOLVER_TIMEOUT) -> dict:
     '''Ожидать результат решения капчи'''
+    print(f"[CAPTCHA] ⏳ Waiting for result (timeout: {{timeout}}s)...", flush=True)
     start = time.time()
+    poll_count = 0
     while time.time() - start < timeout:
+        poll_count += 1
         try:
             response = requests.post(
                 'https://api.capsolver.com/getTaskResult',
@@ -3722,14 +3729,18 @@ def _capsolver_get_result(task_id: str, timeout: int = CAPSOLVER_TIMEOUT) -> dic
             )
             data = response.json()
             status = data.get('status')
+            elapsed = int(time.time() - start)
+            print(f"[CAPTCHA] Poll #{{poll_count}}: status={{status}} ({{elapsed}}s)", flush=True)
             if status == 'ready':
+                print(f"[CAPTCHA] ✅ Solution received!", flush=True)
                 return data.get('solution', {{}})
             elif status == 'failed':
                 raise Exception(data.get('errorDescription', 'Task failed'))
             time.sleep(3)
         except Exception as e:
-            print(f"[CAPTCHA] ⚠️ getTaskResult error: {{e}}")
+            print(f"[CAPTCHA] ⚠️ getTaskResult error: {{e}}", flush=True)
             time.sleep(3)
+    print(f"[CAPTCHA] ❌ Timeout after {{timeout}}s", flush=True)
     return None
 
 def solve_recaptcha_v2(page, site_key: str = None, timeout: int = CAPSOLVER_TIMEOUT) -> str:
@@ -3744,23 +3755,27 @@ def solve_recaptcha_v2(page, site_key: str = None, timeout: int = CAPSOLVER_TIME
     Returns:
         g-recaptcha-response токен или None
     '''
+    print("[CAPTCHA] ▶️ solve_recaptcha_v2() called", flush=True)
     url = page.url
+    print(f"[CAPTCHA] URL: {{url}}", flush=True)
 
     # Автоопределение site_key
     if not site_key:
+        print("[CAPTCHA] 🔍 Searching for site_key...", flush=True)
         try:
             site_key = page.evaluate('''() => {{
                 const el = document.querySelector('[data-sitekey]');
                 return el ? el.getAttribute('data-sitekey') : null;
             }}''')
-        except:
-            pass
+            print(f"[CAPTCHA] site_key from page.evaluate: {{site_key}}", flush=True)
+        except Exception as e:
+            print(f"[CAPTCHA] ⚠️ Error getting site_key: {{e}}", flush=True)
 
     if not site_key:
-        print("[CAPTCHA] ❌ reCAPTCHA site_key not found")
+        print("[CAPTCHA] ❌ reCAPTCHA site_key not found", flush=True)
         return None
 
-    print(f"[CAPTCHA] 🔄 Solving reCAPTCHA v2... sitekey={{site_key[:20]}}...")
+    print(f"[CAPTCHA] 🔄 Solving reCAPTCHA v2... sitekey={{site_key[:20]}}...", flush=True)
 
     task = {{
         'type': 'ReCaptchaV2TaskProxyLess',
@@ -3789,16 +3804,17 @@ def solve_recaptcha_v2(page, site_key: str = None, timeout: int = CAPSOLVER_TIME
                         }}}});
                     }}}}
                 }}}}''', token)
-                print(f"[CAPTCHA] ✅ reCAPTCHA v2 solved!")
+                print(f"[CAPTCHA] ✅ reCAPTCHA v2 solved!", flush=True)
             except Exception as e:
-                print(f"[CAPTCHA] ⚠️ Token inject error: {{e}}")
+                print(f"[CAPTCHA] ⚠️ Token inject error: {{e}}", flush=True)
             return token
 
-    print("[CAPTCHA] ❌ reCAPTCHA v2 solving failed")
+    print("[CAPTCHA] ❌ reCAPTCHA v2 solving failed", flush=True)
     return None
 
 def solve_recaptcha_v3(page, site_key: str = None, action: str = '', timeout: int = CAPSOLVER_TIMEOUT) -> str:
     '''Решить reCAPTCHA v3'''
+    print("[CAPTCHA] ▶️ solve_recaptcha_v3() called", flush=True)
     url = page.url
 
     if not site_key:
@@ -3815,10 +3831,10 @@ def solve_recaptcha_v3(page, site_key: str = None, action: str = '', timeout: in
             pass
 
     if not site_key:
-        print("[CAPTCHA] ❌ reCAPTCHA v3 site_key not found")
+        print("[CAPTCHA] ❌ reCAPTCHA v3 site_key not found", flush=True)
         return None
 
-    print(f"[CAPTCHA] 🔄 Solving reCAPTCHA v3...")
+    print(f"[CAPTCHA] 🔄 Solving reCAPTCHA v3...", flush=True)
 
     task = {{
         'type': 'ReCaptchaV3TaskProxyLess',
@@ -3836,13 +3852,14 @@ def solve_recaptcha_v3(page, site_key: str = None, action: str = '', timeout: in
     if solution:
         token = solution.get('gRecaptchaResponse')
         if token:
-            print(f"[CAPTCHA] ✅ reCAPTCHA v3 solved!")
+            print(f"[CAPTCHA] ✅ reCAPTCHA v3 solved!", flush=True)
             return token
 
     return None
 
 def solve_hcaptcha(page, site_key: str = None, timeout: int = CAPSOLVER_TIMEOUT) -> str:
     '''Решить hCaptcha'''
+    print("[CAPTCHA] ▶️ solve_hcaptcha() called", flush=True)
     url = page.url
 
     if not site_key:
@@ -3855,10 +3872,10 @@ def solve_hcaptcha(page, site_key: str = None, timeout: int = CAPSOLVER_TIMEOUT)
             pass
 
     if not site_key:
-        print("[CAPTCHA] ❌ hCaptcha site_key not found")
+        print("[CAPTCHA] ❌ hCaptcha site_key not found", flush=True)
         return None
 
-    print(f"[CAPTCHA] 🔄 Solving hCaptcha...")
+    print(f"[CAPTCHA] 🔄 Solving hCaptcha...", flush=True)
 
     task = {{
         'type': 'HCaptchaTaskProxyLess',
@@ -3879,7 +3896,7 @@ def solve_hcaptcha(page, site_key: str = None, timeout: int = CAPSOLVER_TIMEOUT)
                     document.querySelector('[name="h-captcha-response"]').value = token;
                     document.querySelector('[name="g-recaptcha-response"]').value = token;
                 }}}}''', token)
-                print(f"[CAPTCHA] ✅ hCaptcha solved!")
+                print(f"[CAPTCHA] ✅ hCaptcha solved!", flush=True)
             except:
                 pass
             return token
@@ -3888,6 +3905,7 @@ def solve_hcaptcha(page, site_key: str = None, timeout: int = CAPSOLVER_TIMEOUT)
 
 def solve_turnstile(page, site_key: str = None, timeout: int = CAPSOLVER_TIMEOUT) -> str:
     '''Решить Cloudflare Turnstile'''
+    print("[CAPTCHA] ▶️ solve_turnstile() called", flush=True)
     url = page.url
 
     if not site_key:
@@ -3900,10 +3918,10 @@ def solve_turnstile(page, site_key: str = None, timeout: int = CAPSOLVER_TIMEOUT
             pass
 
     if not site_key:
-        print("[CAPTCHA] ❌ Turnstile site_key not found")
+        print("[CAPTCHA] ❌ Turnstile site_key not found", flush=True)
         return None
 
-    print(f"[CAPTCHA] 🔄 Solving Cloudflare Turnstile...")
+    print(f"[CAPTCHA] 🔄 Solving Cloudflare Turnstile...", flush=True)
 
     task = {{
         'type': 'AntiTurnstileTaskProxyLess',
@@ -3924,7 +3942,7 @@ def solve_turnstile(page, site_key: str = None, timeout: int = CAPSOLVER_TIMEOUT
                     const input = document.querySelector('[name="cf-turnstile-response"]');
                     if (input) input.value = token;
                 }}}}''', token)
-                print(f"[CAPTCHA] ✅ Turnstile solved!")
+                print(f"[CAPTCHA] ✅ Turnstile solved!", flush=True)
             except:
                 pass
             return token
@@ -3942,7 +3960,7 @@ def solve_image_captcha(image_base64: str, module: str = 'common') -> str:
     Returns:
         Распознанный текст или None
     '''
-    print(f"[CAPTCHA] 🔄 Solving image captcha...")
+    print(f"[CAPTCHA] 🔄 Solving image captcha...", flush=True)
 
     task = {{
         'type': 'ImageToTextTask',
@@ -3958,7 +3976,7 @@ def solve_image_captcha(image_base64: str, module: str = 'common') -> str:
     if solution:
         text = solution.get('text')
         if text:
-            print(f"[CAPTCHA] ✅ Image solved: {{text}}")
+            print(f"[CAPTCHA] ✅ Image solved: {{text}}", flush=True)
             return text
 
     return None
