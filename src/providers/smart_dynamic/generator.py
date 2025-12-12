@@ -3815,21 +3815,20 @@ def solve_recaptcha_v2(page, site_key: str = None, timeout: int = CAPSOLVER_TIME
             if CAPSOLVER_CLICK_CHECKBOX:
                 try:
                     print("[CAPTCHA] 🖱️ Clicking checkbox visually...", flush=True)
-                    # reCAPTCHA чекбокс находится в iframe
-                    recaptcha_frame = page.frame_locator('iframe[src*="recaptcha"][src*="anchor"]')
+                    # reCAPTCHA чекбокс находится в iframe - берём первый
+                    recaptcha_frame = page.frame_locator('iframe[src*="recaptcha"][src*="anchor"]').first
                     checkbox = recaptcha_frame.locator('.recaptcha-checkbox-border, #recaptcha-anchor')
-                    if checkbox.count() > 0:
-                        checkbox.first.click()
-                        page.wait_for_timeout(500)
-                        print("[CAPTCHA] ✅ Checkbox clicked!", flush=True)
-                    else:
-                        # Альтернативный способ - клик по div.g-recaptcha
-                        div_recaptcha = page.locator('div.g-recaptcha')
-                        if div_recaptcha.count() > 0:
-                            div_recaptcha.first.click()
-                            print("[CAPTCHA] ✅ Clicked on g-recaptcha div", flush=True)
+                    checkbox.click(timeout=3000)
+                    page.wait_for_timeout(500)
+                    print("[CAPTCHA] ✅ Checkbox clicked!", flush=True)
                 except Exception as e:
-                    print(f"[CAPTCHA] ⚠️ Checkbox click error (not critical): {{e}}", flush=True)
+                    # Альтернативный способ - клик по div.g-recaptcha
+                    try:
+                        div_recaptcha = page.locator('div.g-recaptcha').first
+                        div_recaptcha.click(timeout=3000)
+                        print("[CAPTCHA] ✅ Clicked on g-recaptcha div", flush=True)
+                    except:
+                        print(f"[CAPTCHA] ⚠️ Checkbox click error (not critical): {{e}}", flush=True)
 
             return token
 
@@ -3930,13 +3929,12 @@ def solve_hcaptcha(page, site_key: str = None, timeout: int = CAPSOLVER_TIMEOUT)
             if CAPSOLVER_CLICK_CHECKBOX:
                 try:
                     print("[CAPTCHA] 🖱️ Clicking hCaptcha checkbox...", flush=True)
-                    # hCaptcha чекбокс в iframe
-                    hcaptcha_frame = page.frame_locator('iframe[src*="hcaptcha"]')
+                    # hCaptcha чекбокс в iframe - берём первый
+                    hcaptcha_frame = page.frame_locator('iframe[src*="hcaptcha"]').first
                     checkbox = hcaptcha_frame.locator('#checkbox')
-                    if checkbox.count() > 0:
-                        checkbox.first.click()
-                        page.wait_for_timeout(500)
-                        print("[CAPTCHA] ✅ hCaptcha checkbox clicked!", flush=True)
+                    checkbox.click(timeout=3000)
+                    page.wait_for_timeout(500)
+                    print("[CAPTCHA] ✅ hCaptcha checkbox clicked!", flush=True)
                 except Exception as e:
                     print(f"[CAPTCHA] ⚠️ hCaptcha click error (not critical): {{e}}", flush=True)
 
@@ -3991,21 +3989,20 @@ def solve_turnstile(page, site_key: str = None, timeout: int = CAPSOLVER_TIMEOUT
             if CAPSOLVER_CLICK_CHECKBOX:
                 try:
                     print("[CAPTCHA] 🖱️ Clicking Turnstile widget...", flush=True)
-                    # Turnstile в iframe
-                    turnstile_frame = page.frame_locator('iframe[src*="turnstile"]')
+                    # Turnstile в iframe - берём первый
+                    turnstile_frame = page.frame_locator('iframe[src*="turnstile"]').first
                     checkbox = turnstile_frame.locator('input[type="checkbox"]')
-                    if checkbox.count() > 0:
-                        checkbox.first.click()
-                        page.wait_for_timeout(500)
-                        print("[CAPTCHA] ✅ Turnstile clicked!", flush=True)
-                    else:
-                        # Попробуем кликнуть по div с turnstile
-                        turnstile_div = page.locator('.cf-turnstile')
-                        if turnstile_div.count() > 0:
-                            turnstile_div.first.click()
-                            print("[CAPTCHA] ✅ Turnstile div clicked!", flush=True)
+                    checkbox.click(timeout=3000)
+                    page.wait_for_timeout(500)
+                    print("[CAPTCHA] ✅ Turnstile clicked!", flush=True)
                 except Exception as e:
-                    print(f"[CAPTCHA] ⚠️ Turnstile click error (not critical): {{e}}", flush=True)
+                    # Попробуем кликнуть по div с turnstile
+                    try:
+                        turnstile_div = page.locator('.cf-turnstile').first
+                        turnstile_div.click(timeout=3000)
+                        print("[CAPTCHA] ✅ Turnstile div clicked!", flush=True)
+                    except:
+                        print(f"[CAPTCHA] ⚠️ Turnstile click error (not critical): {{e}}", flush=True)
 
             return token
 
