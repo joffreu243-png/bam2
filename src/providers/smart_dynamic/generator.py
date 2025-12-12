@@ -3192,7 +3192,7 @@ def socks5_connect(target_host, target_port):
     sock.settimeout(30)
     sock.connect((SOCKS5_HOST, SOCKS5_PORT))
     # Auth methods: 0x00=no auth, 0x02=user/pass
-    sock.send(b"\\x05\\x02\\x00\\x02")
+    sock.send(b"\\\\x05\\\\x02\\\\x00\\\\x02")
     resp = sock.recv(2)
     if len(resp) < 2:
         raise Exception("SOCKS5 no response")
@@ -3205,7 +3205,7 @@ def socks5_connect(target_host, target_port):
     elif resp[1] != 0:
         raise Exception(f"SOCKS5 method error")
     # Connect
-    req = b"\\x05\\x01\\x00\\x03" + bytes([len(target_host)]) + target_host.encode() + struct.pack(">H", target_port)
+    req = b"\\\\x05\\\\x01\\\\x00\\\\x03" + bytes([len(target_host)]) + target_host.encode() + struct.pack(">H", target_port)
     sock.send(req)
     resp = sock.recv(10)
     if len(resp) < 2 or resp[1] != 0:
@@ -3230,14 +3230,14 @@ def handle_client(client):
     try:
         req = client.recv(8192).decode("utf-8", errors="ignore")
         if not req.startswith("CONNECT"):
-            client.send(b"HTTP/1.1 400 Bad Request\\r\\n\\r\\n")
+            client.send(b"HTTP/1.1 400 Bad Request\\\\r\\\\n\\\\r\\\\n")
             client.close()
             return
-        line = req.split("\\r\\n")[0]
+        line = req.split("\\\\r\\\\n")[0]
         target = line.split()[1]
         h, p = target.rsplit(":", 1)
         remote = socks5_connect(h, int(p))
-        client.send(b"HTTP/1.1 200 Connection Established\\r\\n\\r\\n")
+        client.send(b"HTTP/1.1 200 Connection Established\\\\r\\\\n\\\\r\\\\n")
         t1 = threading.Thread(target=forward, args=(client, remote), daemon=True)
         t2 = threading.Thread(target=forward, args=(remote, client), daemon=True)
         t1.start()
