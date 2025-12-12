@@ -3160,15 +3160,20 @@ def create_socks5_tunnel(proxy_type: str, host: str, port: str, login: str, pass
     """
     global _proxy_tunnels
     import sys
+    from urllib.parse import quote
 
     try:
         local_port = _find_free_port(10800 + len(_proxy_tunnels))
 
-        # pproxy: локальный HTTP -> удалённый SOCKS5 с auth
-        remote_url = f"{proxy_type}://{login}:{password}@{host}:{port}"
+        # URL-encode логин и пароль (для спецсимволов типа - @ : и т.д.)
+        login_encoded = quote(login, safe='')
+        password_encoded = quote(password, safe='')
+
+        # pproxy формат: socks5://user:pass@host:port
+        remote_url = f"{proxy_type}://{login_encoded}:{password_encoded}@{host}:{port}"
 
         print(f"[PROXY TUNNEL] 🔧 Creating tunnel localhost:{local_port} -> {proxy_type}://{host}:{port}")
-        print(f"[PROXY TUNNEL] Auth: {login[:10]}...:{password[:5]}...")
+        print(f"[PROXY TUNNEL] Auth: {login[:25]}...:{password[:5]}...")
 
         # Используем sys.executable для правильного python
         process = subprocess.Popen(
