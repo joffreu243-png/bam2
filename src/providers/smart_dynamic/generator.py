@@ -109,7 +109,8 @@ class Generator:
         self.captcha_min_score = captcha_config.get('min_score', 0.7)
         self.captcha_auto_detect = captcha_config.get('auto_detect', True)
         self.captcha_use_proxy = captcha_config.get('use_proxy', False)
-        print(f"[GENERATOR DEBUG] Captcha: enabled={self.captcha_enabled}, auto_detect={self.captcha_auto_detect}")
+        self.captcha_click_checkbox = captcha_config.get('click_checkbox', True)
+        print(f"[GENERATOR DEBUG] Captcha: enabled={self.captcha_enabled}, auto_detect={self.captcha_auto_detect}, click_checkbox={self.captcha_click_checkbox}")
 
         # Симуляция ввода текста
         self.simulate_typing = config.get('simulate_typing', True)
@@ -3679,6 +3680,7 @@ print("[ANTIDETECT] 🛡️ Antidetect mode ENABLED")
         timeout = self.captcha_timeout
         min_score = self.captcha_min_score
         use_proxy = self.captcha_use_proxy
+        click_checkbox = self.captcha_click_checkbox
 
         return f"""# ============================================================
 # 🔓 CAPSOLVER ANTI-CAPTCHA - Автоматическое решение капчи
@@ -3691,6 +3693,7 @@ CAPSOLVER_API_KEY = "{api_key}"
 CAPSOLVER_TIMEOUT = {timeout}
 CAPSOLVER_MIN_SCORE = {min_score}
 CAPSOLVER_USE_PROXY = {use_proxy}
+CAPSOLVER_CLICK_CHECKBOX = {click_checkbox}
 
 print("[CAPTCHA] 🔓 CapSolver Anti-Captcha ENABLED")
 
@@ -3807,6 +3810,27 @@ def solve_recaptcha_v2(page, site_key: str = None, timeout: int = CAPSOLVER_TIME
                 print(f"[CAPTCHA] ✅ reCAPTCHA v2 solved!", flush=True)
             except Exception as e:
                 print(f"[CAPTCHA] ⚠️ Token inject error: {{e}}", flush=True)
+
+            # 🖱️ Клик по чекбоксу для визуального подтверждения
+            if CAPSOLVER_CLICK_CHECKBOX:
+                try:
+                    print("[CAPTCHA] 🖱️ Clicking checkbox visually...", flush=True)
+                    # reCAPTCHA чекбокс находится в iframe
+                    recaptcha_frame = page.frame_locator('iframe[src*="recaptcha"][src*="anchor"]')
+                    checkbox = recaptcha_frame.locator('.recaptcha-checkbox-border, #recaptcha-anchor')
+                    if checkbox.count() > 0:
+                        checkbox.first.click()
+                        page.wait_for_timeout(500)
+                        print("[CAPTCHA] ✅ Checkbox clicked!", flush=True)
+                    else:
+                        # Альтернативный способ - клик по div.g-recaptcha
+                        div_recaptcha = page.locator('div.g-recaptcha')
+                        if div_recaptcha.count() > 0:
+                            div_recaptcha.first.click()
+                            print("[CAPTCHA] ✅ Clicked on g-recaptcha div", flush=True)
+                except Exception as e:
+                    print(f"[CAPTCHA] ⚠️ Checkbox click error (not critical): {{e}}", flush=True)
+
             return token
 
     print("[CAPTCHA] ❌ reCAPTCHA v2 solving failed", flush=True)
@@ -3893,12 +3917,29 @@ def solve_hcaptcha(page, site_key: str = None, timeout: int = CAPSOLVER_TIMEOUT)
         if token:
             try:
                 page.evaluate(f'''(token) => {{{{
-                    document.querySelector('[name="h-captcha-response"]').value = token;
-                    document.querySelector('[name="g-recaptcha-response"]').value = token;
+                    const h = document.querySelector('[name="h-captcha-response"]');
+                    const g = document.querySelector('[name="g-recaptcha-response"]');
+                    if (h) h.value = token;
+                    if (g) g.value = token;
                 }}}}''', token)
                 print(f"[CAPTCHA] ✅ hCaptcha solved!", flush=True)
-            except:
-                pass
+            except Exception as e:
+                print(f"[CAPTCHA] ⚠️ Token inject error: {{e}}", flush=True)
+
+            # 🖱️ Клик по чекбоксу для визуального подтверждения
+            if CAPSOLVER_CLICK_CHECKBOX:
+                try:
+                    print("[CAPTCHA] 🖱️ Clicking hCaptcha checkbox...", flush=True)
+                    # hCaptcha чекбокс в iframe
+                    hcaptcha_frame = page.frame_locator('iframe[src*="hcaptcha"]')
+                    checkbox = hcaptcha_frame.locator('#checkbox')
+                    if checkbox.count() > 0:
+                        checkbox.first.click()
+                        page.wait_for_timeout(500)
+                        print("[CAPTCHA] ✅ hCaptcha checkbox clicked!", flush=True)
+                except Exception as e:
+                    print(f"[CAPTCHA] ⚠️ hCaptcha click error (not critical): {{e}}", flush=True)
+
             return token
 
     return None
@@ -3943,8 +3984,29 @@ def solve_turnstile(page, site_key: str = None, timeout: int = CAPSOLVER_TIMEOUT
                     if (input) input.value = token;
                 }}}}''', token)
                 print(f"[CAPTCHA] ✅ Turnstile solved!", flush=True)
-            except:
-                pass
+            except Exception as e:
+                print(f"[CAPTCHA] ⚠️ Token inject error: {{e}}", flush=True)
+
+            # 🖱️ Клик по Turnstile widget для визуального подтверждения
+            if CAPSOLVER_CLICK_CHECKBOX:
+                try:
+                    print("[CAPTCHA] 🖱️ Clicking Turnstile widget...", flush=True)
+                    # Turnstile в iframe
+                    turnstile_frame = page.frame_locator('iframe[src*="turnstile"]')
+                    checkbox = turnstile_frame.locator('input[type="checkbox"]')
+                    if checkbox.count() > 0:
+                        checkbox.first.click()
+                        page.wait_for_timeout(500)
+                        print("[CAPTCHA] ✅ Turnstile clicked!", flush=True)
+                    else:
+                        # Попробуем кликнуть по div с turnstile
+                        turnstile_div = page.locator('.cf-turnstile')
+                        if turnstile_div.count() > 0:
+                            turnstile_div.first.click()
+                            print("[CAPTCHA] ✅ Turnstile div clicked!", flush=True)
+                except Exception as e:
+                    print(f"[CAPTCHA] ⚠️ Turnstile click error (not critical): {{e}}", flush=True)
+
             return token
 
     return None

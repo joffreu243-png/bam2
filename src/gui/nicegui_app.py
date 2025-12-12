@@ -956,6 +956,13 @@ page.goto("https://example.com")
                             value=self.config.get('captcha', {}).get('use_proxy', False)
                         ).style('color: #e0e0e5;')
 
+                    with ui.row().classes('gap-4 mt-2'):
+                        self.captcha_click_checkbox = ui.checkbox(
+                            'Click checkbox visually after solving (emulate user click)',
+                            value=self.config.get('captcha', {}).get('click_checkbox', True)
+                        ).style('color: #00ff88;')
+                        self.captcha_click_checkbox.tooltip('После решения капчи кликнет по чекбоксу для визуального подтверждения')
+
                 # === USAGE EXAMPLE ===
                 with ui.column().classes('hitech-card w-full gap-4').style('padding: 20px;'):
                     ui.label('📝 HOW TO USE IN YOUR CODE').style('color: #00d4ff; font-weight: 600; letter-spacing: 1px;')
@@ -1028,6 +1035,7 @@ if has_captcha(page):
             self.config['captcha']['min_score'] = float(self.captcha_min_score_input.value)
             self.config['captcha']['auto_detect'] = self.captcha_auto_detect.value
             self.config['captcha']['use_proxy'] = self.captcha_use_proxy.value
+            self.config['captcha']['click_checkbox'] = self.captcha_click_checkbox.value
 
             self.save_config()
             ui.notify('Captcha settings saved!', type='positive')
