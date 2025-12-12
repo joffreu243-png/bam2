@@ -407,7 +407,6 @@ class BrowserAutomatorApp:
         with ui.column().classes('flex-grow').style('background: #0a0a0f; height: 100%;'):
             with ui.tabs().classes('hitech-tabs w-full') as tabs:
                 launch_tab = ui.tab('🚀 LAUNCH')
-                recorder_tab = ui.tab('📹 RECORDER')
                 script_tab = ui.tab('📝 SCRIPT')
                 data_tab = ui.tab('📊 DATA')
                 settings_tab = ui.tab('⚙️ SETTINGS')
@@ -416,9 +415,6 @@ class BrowserAutomatorApp:
             with ui.tab_panels(tabs, value=launch_tab).classes('w-full flex-grow').style('background: #0a0a0f;'):
                 with ui.tab_panel(launch_tab).style('padding: 20px;'):
                     self._build_launch_tab()
-
-                with ui.tab_panel(recorder_tab).style('padding: 20px;'):
-                    self._build_recorder_tab()
 
                 with ui.tab_panel(script_tab).style('padding: 20px;'):
                     self._build_script_tab()
@@ -526,16 +522,6 @@ class BrowserAutomatorApp:
                         with ui.row().classes('w-full gap-2'):
                             ui.button('💾 Save', on_click=self.save_script).classes('hitech-btn flex-1').style('font-size: 11px;')
                             ui.button('🗑 Clear', on_click=self.clear_editor).classes('hitech-btn flex-1').style('font-size: 11px;')
-
-    def _build_recorder_tab(self):
-        """Build the recorder tab"""
-        with ui.column().classes('w-full h-full items-center justify-center gap-4'):
-            ui.label('📹').style('font-size: 64px;')
-            ui.label('ACTION RECORDER').style('color: #00d4ff; font-size: 24px; font-weight: 600; letter-spacing: 2px;')
-            ui.label('Record browser actions and convert to automation code').style('color: #8888a0;')
-            with ui.row().classes('gap-4 mt-4'):
-                ui.button('▶ START RECORDING', on_click=lambda: ui.notify('Recording started')).classes('hitech-btn-primary').style('height: 50px; padding: 0 32px;')
-                ui.button('⏹ STOP', on_click=lambda: ui.notify('Recording stopped')).classes('hitech-btn-danger').style('height: 50px; padding: 0 24px;')
 
     def _build_script_tab(self):
         """Build the generated script tab"""
@@ -817,13 +803,26 @@ class BrowserAutomatorApp:
             ui.notify(f'Connection failed: {e}', type='negative')
 
 
+def find_free_port():
+    """Find a free port on localhost"""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('', 0))
+        s.listen(1)
+        port = s.getsockname()[1]
+    return port
+
+
 def main():
     """Main entry point"""
+    port = find_free_port()
+    print(f"Starting on port {port}...")
+
     app_instance = BrowserAutomatorApp()
     app_instance.build_ui()
     ui.run(
         title='Browser Automator Pro v5.0',
-        port=0,  # Random available port
+        port=port,
         reload=False,
         show=True,
         dark=True
