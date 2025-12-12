@@ -478,9 +478,22 @@ class BrowserAutomatorApp:
                         ui.button('✨ Generate', on_click=self.generate_script).classes('hitech-btn-primary').style('font-size: 11px;')
 
                 # Code editor - fills remaining space
+                default_code = '''# Вставьте код из Playwright Recorder или пишите вручную
+# Формат: page.goto(), page.get_by_role().click(), page.fill() и т.д.
+
+page.goto("https://example.com")
+
+# Пример заполнения формы:
+# page.get_by_label("Email").fill("test@example.com")
+# page.get_by_role("button", name="Submit").click()
+
+# Для вопросов используйте формат:
+# ### Текст вопроса на странице
+# page.get_by_role("button", name="Ответ").click()
+'''
                 self.code_editor = ui.textarea(
-                    value='# Your Playwright automation code here\n\nasync def main(page, data):\n    await page.goto("https://example.com")\n    # Your code...\n',
-                    placeholder='Enter your automation code here...'
+                    value=default_code,
+                    placeholder='Вставьте код из Playwright Recorder...'
                 ).classes('hitech-code w-full').style('flex: 1; min-height: 500px; resize: vertical;')
 
             # Right: Settings panel
