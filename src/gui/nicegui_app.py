@@ -1029,7 +1029,7 @@ if has_captcha(page):
             self.config['captcha']['auto_detect'] = self.captcha_auto_detect.value
             self.config['captcha']['use_proxy'] = self.captcha_use_proxy.value
 
-            self._save_config()
+            self.save_config()
             ui.notify('Captcha settings saved!', type='positive')
         except Exception as e:
             ui.notify(f'Error saving: {e}', type='negative')
