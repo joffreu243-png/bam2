@@ -3175,7 +3175,7 @@ def create_socks5_tunnel(proxy_type: str, host: str, port: str, login: str, pass
         password_escaped = password.replace('\\\\', '\\\\\\\\').replace('"', '\\\\"')
 
         # Создаём Python скрипт для туннеля
-        tunnel_script = f'''# -*- coding: utf-8 -*-
+        tunnel_script = f"""# -*- coding: utf-8 -*-
 import socket
 import threading
 import struct
@@ -3261,7 +3261,7 @@ def main():
 
 if __name__ == "__main__":
     main()
-'''
+"""
 
         # Сохраняем скрипт во временный файл
         fd, script_path = tempfile.mkstemp(suffix='.py', prefix='socks_tunnel_')
