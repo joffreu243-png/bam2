@@ -462,6 +462,10 @@ class BrowserAutomatorApp:
             # Headless checkbox
             self.headless_checkbox = ui.checkbox('Headless', value=False).style('color: #e0e0e5;')
 
+            # Antidetect checkbox (only for Local Chromium)
+            self.antidetect_checkbox = ui.checkbox('🛡️ Antidetect', value=True).style('color: #00ff88;')
+            self.antidetect_checkbox.tooltip('Применять реалистичные fingerprints браузера, привязанные к гео прокси')
+
             ui.space()
 
             # Action buttons
@@ -1252,11 +1256,16 @@ page.goto("https://example.com")
 
             # Build config for generator
             nine_proxy_config = self.config.get('nine_proxy', {})
+            # Antidetect mode (only for Local Chromium)
+            antidetect_enabled = self.antidetect_checkbox.value if browser_mode == 'local_chromium' else False
+
             gen_config = {
                 'api_token': self.config.get('octobrowser', {}).get('api_token', ''),
                 'threads_count': threads_count,
                 'headless': headless,
                 'browser_mode': browser_mode,
+                'antidetect_enabled': antidetect_enabled,
+                'antidetect_country': 'auto',  # auto = определять по гео прокси
                 'proxy': self.config.get('proxy', {}),
                 'proxy_list': self.config.get('proxy_list', {}),
                 # 9Proxy settings

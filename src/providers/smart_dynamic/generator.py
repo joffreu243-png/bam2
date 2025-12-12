@@ -96,6 +96,11 @@ class Generator:
         print(f"[GENERATOR DEBUG]   - nine_proxy_state: {nine_proxy_state}")
         print(f"[GENERATOR DEBUG]   - nine_proxy_city: {nine_proxy_city}")
 
+        # 🔥 Antidetect настройки
+        self.antidetect_enabled = config.get('antidetect_enabled', False)
+        self.antidetect_country = config.get('antidetect_country', 'auto')  # 'auto' = определять по прокси
+        print(f"[GENERATOR DEBUG] Antidetect: enabled={self.antidetect_enabled}, country={self.antidetect_country}")
+
         # Симуляция ввода текста
         self.simulate_typing = config.get('simulate_typing', True)
         self.typing_delay = config.get('typing_delay', 100)
@@ -117,6 +122,9 @@ class Generator:
         # 🔥 Условная генерация: Octobrowser API или Local Chromium
         if self.browser_mode == 'local_chromium':
             script += self._generate_local_chromium_functions()
+            # 🔥 Antidetect fingerprints для Local Chromium
+            if self.antidetect_enabled:
+                script += self._generate_antidetect_fingerprints()
         else:
             script += self._generate_octobrowser_functions(profile_config)
 
@@ -3171,6 +3179,268 @@ def get_proxy_for_playwright(thread_id: int, iteration_number: int) -> Optional[
 
 '''
 
+    def _generate_antidetect_fingerprints(self) -> str:
+        """Генерирует код для antidetect fingerprints"""
+        return '''# ============================================================
+# 🔥 ANTIDETECT FINGERPRINTS - Реалистичные отпечатки браузера
+# ============================================================
+
+import json
+import random
+import hashlib
+from pathlib import Path
+
+# Загружаем базы данных fingerprints
+FINGERPRINTS_BASE_PATH = Path(__file__).parent / 'src' / 'fingerprints'
+if not FINGERPRINTS_BASE_PATH.exists():
+    FINGERPRINTS_BASE_PATH = Path('src/fingerprints')
+
+def load_fingerprint_database():
+    """Загрузка базы fingerprints"""
+    try:
+        fp_path = FINGERPRINTS_BASE_PATH / 'fingerprints_database.json'
+        if fp_path.exists():
+            with open(fp_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except:
+        pass
+    return {'fingerprints': []}
+
+def load_geo_database():
+    """Загрузка гео базы"""
+    try:
+        geo_path = FINGERPRINTS_BASE_PATH / 'geo_database.json'
+        if geo_path.exists():
+            with open(geo_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except:
+        pass
+    return {}
+
+def load_stealth_script():
+    """Загрузка stealth скрипта"""
+    try:
+        script_path = FINGERPRINTS_BASE_PATH / 'stealth' / 'stealth_script.js'
+        if script_path.exists():
+            with open(script_path, 'r', encoding='utf-8') as f:
+                return f.read()
+    except:
+        pass
+    return ''
+
+# Загружаем при старте
+FINGERPRINTS_DB = load_fingerprint_database()
+GEO_DB = load_geo_database()
+STEALTH_SCRIPT_TEMPLATE = load_stealth_script()
+
+# Маппинг timezone -> offset в минутах
+TIMEZONE_OFFSETS = {
+    "America/New_York": -300, "America/Chicago": -360, "America/Denver": -420,
+    "America/Los_Angeles": -480, "America/Phoenix": -420,
+    "Europe/London": 0, "Europe/Paris": 60, "Europe/Berlin": 60,
+    "Europe/Moscow": 180, "Europe/Kiev": 120, "Europe/Warsaw": 60,
+    "Asia/Tokyo": 540, "Asia/Seoul": 540, "Asia/Shanghai": 480,
+    "Asia/Singapore": 480, "Asia/Bangkok": 420,
+    "Australia/Sydney": 660, "Australia/Melbourne": 660,
+    "America/Sao_Paulo": -180, "America/Mexico_City": -360,
+}
+
+def detect_country_from_proxy(proxy_string: str) -> str:
+    """Определение страны по IP прокси через GeoIP API"""
+    if not proxy_string:
+        return 'US'
+
+    import re
+    # Извлекаем IP
+    patterns = [
+        r'^(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}):\\d+',
+        r'@(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}):\\d+',
+        r'://(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}):\\d+',
+    ]
+
+    ip = None
+    for pattern in patterns:
+        match = re.search(pattern, proxy_string)
+        if match:
+            ip = match.group(1)
+            break
+
+    if not ip:
+        return 'US'
+
+    try:
+        import requests
+        response = requests.get(f'http://ip-api.com/json/{ip}?fields=countryCode', timeout=5)
+        if response.status_code == 200:
+            country = response.json().get('countryCode', 'US')
+            print(f"[ANTIDETECT] GeoIP: {ip} -> {country}")
+            return country
+    except Exception as e:
+        print(f"[ANTIDETECT] GeoIP error: {e}")
+
+    return 'US'
+
+def generate_fingerprint_for_country(country_code: str, proxy_string: str = None) -> dict:
+    """Генерация fingerprint привязанного к стране"""
+
+    # Получаем базовый fingerprint
+    fingerprints = FINGERPRINTS_DB.get('fingerprints', [])
+    base_fp = random.choice(fingerprints) if fingerprints else {
+        'userAgent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'platform': 'Win32',
+        'vendor': 'Google Inc.',
+        'screen': {'width': 1920, 'height': 1080, 'colorDepth': 24, 'pixelRatio': 1},
+        'webgl': {'vendor': 'Google Inc.', 'renderer': 'ANGLE'},
+        'hardwareConcurrency': 8,
+        'deviceMemory': 8,
+        'maxTouchPoints': 0,
+        'plugins': []
+    }
+
+    # Получаем данные страны
+    country = GEO_DB.get(country_code.upper(), GEO_DB.get('US', {}))
+    if not country:
+        country = {
+            'timezones': ['America/New_York'],
+            'languages': ['en-US', 'en'],
+            'accept_language': 'en-US,en;q=0.9',
+            'cities': [{'name': 'New York', 'lat': 40.7128, 'lng': -74.0060, 'timezone': 'America/New_York'}]
+        }
+
+    # Выбираем случайный город
+    cities = country.get('cities', [])
+    city = random.choice(cities) if cities else {'name': 'Unknown', 'lat': 0, 'lng': 0, 'timezone': country.get('timezones', ['UTC'])[0]}
+
+    # Timezone
+    timezone_name = city.get('timezone', country.get('timezones', ['UTC'])[0])
+    timezone_offset = TIMEZONE_OFFSETS.get(timezone_name, 0)
+
+    # Languages
+    languages = country.get('languages', ['en-US', 'en'])
+
+    # Seed для консистентности (одинаковый fingerprint для одного прокси)
+    if proxy_string:
+        seed = int(hashlib.md5(proxy_string.encode()).hexdigest()[:8], 16)
+        random.seed(seed)
+
+    fingerprint = {
+        'userAgent': base_fp.get('userAgent', ''),
+        'platform': base_fp.get('platform', 'Win32'),
+        'vendor': base_fp.get('vendor', 'Google Inc.'),
+        'screen': base_fp.get('screen', {'width': 1920, 'height': 1080, 'colorDepth': 24, 'pixelRatio': 1}),
+        'webgl': base_fp.get('webgl', {'vendor': 'Google Inc.', 'renderer': 'ANGLE'}),
+        'hardwareConcurrency': base_fp.get('hardwareConcurrency', 8),
+        'deviceMemory': base_fp.get('deviceMemory', 8),
+        'maxTouchPoints': base_fp.get('maxTouchPoints', 0),
+        'plugins': base_fp.get('plugins', []),
+        'languages': languages,
+        'acceptLanguage': country.get('accept_language', 'en-US,en;q=0.9'),
+        'timezone': timezone_name,
+        'timezoneOffset': timezone_offset,
+        'locale': country.get('locale', languages[0]),
+        'latitude': city.get('lat', 0),
+        'longitude': city.get('lng', 0),
+        'city': city.get('name', 'Unknown'),
+        'country': country_code.upper(),
+    }
+
+    random.seed()  # Сброс seed
+    return fingerprint
+
+def generate_stealth_script(fingerprint: dict) -> str:
+    """Генерация JavaScript для применения fingerprint"""
+    if not STEALTH_SCRIPT_TEMPLATE:
+        return ''
+
+    script = STEALTH_SCRIPT_TEMPLATE
+
+    replacements = {
+        '{{USER_AGENT}}': fingerprint.get('userAgent', ''),
+        '{{PLATFORM}}': fingerprint.get('platform', 'Win32'),
+        '{{VENDOR}}': fingerprint.get('vendor', 'Google Inc.'),
+        '{{LANGUAGES}}': json.dumps(fingerprint.get('languages', ['en-US'])),
+        '{{HARDWARE_CONCURRENCY}}': str(fingerprint.get('hardwareConcurrency', 8)),
+        '{{DEVICE_MEMORY}}': str(fingerprint.get('deviceMemory', 8)),
+        '{{MAX_TOUCH_POINTS}}': str(fingerprint.get('maxTouchPoints', 0)),
+        '{{SCREEN_WIDTH}}': str(fingerprint.get('screen', {}).get('width', 1920)),
+        '{{SCREEN_HEIGHT}}': str(fingerprint.get('screen', {}).get('height', 1080)),
+        '{{COLOR_DEPTH}}': str(fingerprint.get('screen', {}).get('colorDepth', 24)),
+        '{{PIXEL_RATIO}}': str(fingerprint.get('screen', {}).get('pixelRatio', 1)),
+        '{{TIMEZONE}}': fingerprint.get('timezone', 'America/New_York'),
+        '{{TIMEZONE_OFFSET}}': str(fingerprint.get('timezoneOffset', -300)),
+        '{{WEBGL_VENDOR}}': fingerprint.get('webgl', {}).get('vendor', 'Google Inc.'),
+        '{{WEBGL_RENDERER}}': fingerprint.get('webgl', {}).get('renderer', 'ANGLE'),
+        '{{PLUGINS}}': json.dumps(fingerprint.get('plugins', [])),
+        '{{LATITUDE}}': str(fingerprint.get('latitude', 0)),
+        '{{LONGITUDE}}': str(fingerprint.get('longitude', 0)),
+    }
+
+    for placeholder, value in replacements.items():
+        script = script.replace(placeholder, value)
+
+    return script
+
+def get_antidetect_context_options(fingerprint: dict) -> dict:
+    """Получение опций для Playwright context с fingerprint"""
+    screen = fingerprint.get('screen', {})
+    return {
+        'user_agent': fingerprint.get('userAgent', ''),
+        'viewport': {
+            'width': screen.get('width', 1920),
+            'height': screen.get('height', 1080) - 140
+        },
+        'screen': {
+            'width': screen.get('width', 1920),
+            'height': screen.get('height', 1080)
+        },
+        'device_scale_factor': screen.get('pixelRatio', 1),
+        'locale': fingerprint.get('locale', 'en-US'),
+        'timezone_id': fingerprint.get('timezone', 'America/New_York'),
+        'geolocation': {
+            'latitude': fingerprint.get('latitude', 40.7128),
+            'longitude': fingerprint.get('longitude', -74.0060)
+        },
+        'permissions': ['geolocation'],
+        'color_scheme': 'light',
+        'extra_http_headers': {
+            'Accept-Language': fingerprint.get('acceptLanguage', 'en-US,en;q=0.9')
+        }
+    }
+
+def get_antidetect_launch_args(fingerprint: dict) -> list:
+    """Аргументы запуска браузера для antidetect"""
+    screen = fingerprint.get('screen', {})
+    return [
+        '--disable-blink-features=AutomationControlled',
+        '--disable-infobars',
+        '--disable-dev-shm-usage',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-background-networking',
+        '--disable-sync',
+        '--disable-translate',
+        '--metrics-recording-only',
+        '--mute-audio',
+        f'--window-size={screen.get("width", 1920)},{screen.get("height", 1080)}',
+        f'--lang={fingerprint.get("languages", ["en-US"])[0]}',
+    ]
+
+def apply_stealth_to_page(page, fingerprint: dict):
+    """Применение stealth скрипта к странице"""
+    stealth_script = generate_stealth_script(fingerprint)
+    if stealth_script:
+        page.add_init_script(stealth_script)
+        print(f"[ANTIDETECT] ✅ Fingerprint applied: {fingerprint.get('country', 'US')} / {fingerprint.get('city', 'Unknown')} / {fingerprint.get('timezone', 'UTC')}")
+    else:
+        print("[ANTIDETECT] ⚠️ Stealth script not loaded, using basic settings")
+
+# Флаг antidetect режима
+ANTIDETECT_ENABLED = True
+ANTIDETECT_COUNTRY = "auto"  # 'auto' = определять по прокси, или код страны (US, RU, DE...)
+
+print("[ANTIDETECT] 🛡️ Antidetect mode ENABLED")
+'''
+
     def _generate_local_chromium_worker_function(self) -> str:
         """Генерирует worker функцию для Local Chromium режима"""
         return '''# ============================================================
@@ -3218,6 +3488,7 @@ def process_task(task_data: tuple) -> Dict:
     try:
         # 🔥 Получаем прокси для Playwright (если настроен)
         playwright_proxy = get_proxy_for_playwright(thread_id, iteration_number)
+        proxy_string = playwright_proxy.get('server', '') if playwright_proxy else ''
 
         if playwright_proxy:
             print(f"[THREAD {thread_id}] Используем прокси: {playwright_proxy['server']}")
@@ -3225,35 +3496,59 @@ def process_task(task_data: tuple) -> Dict:
             print(f"[THREAD {thread_id}] Прокси не настроен, запуск напрямую")
 
         # ========================================
+        # 🔥 ANTIDETECT: Генерируем fingerprint если включен
+        # ========================================
+        fingerprint = None
+        if 'ANTIDETECT_ENABLED' in dir() and ANTIDETECT_ENABLED:
+            # Определяем страну
+            if ANTIDETECT_COUNTRY == 'auto' and proxy_string:
+                country_code = detect_country_from_proxy(proxy_string)
+            else:
+                country_code = ANTIDETECT_COUNTRY if ANTIDETECT_COUNTRY != 'auto' else 'US'
+
+            fingerprint = generate_fingerprint_for_country(country_code, proxy_string)
+            print(f"[THREAD {thread_id}] [ANTIDETECT] 🛡️ Fingerprint: {fingerprint.get('country')} / {fingerprint.get('city')} / {fingerprint.get('timezone')}")
+
+        # ========================================
         # 🔥 Запуск ЛОКАЛЬНОГО Chromium через Playwright
         # ========================================
         print(f"[THREAD {thread_id}] Запуск локального Chromium...")
         playwright_instance = sync_playwright().start()
 
-        # Аргументы для браузера
-        browser_args = [
-            '--disable-blink-features=AutomationControlled',
-            '--disable-infobars',
-            '--no-first-run',
-            '--no-default-browser-check',
-        ]
+        # Аргументы для браузера (с учетом antidetect)
+        if fingerprint:
+            browser_args = get_antidetect_launch_args(fingerprint)
+        else:
+            browser_args = [
+                '--disable-blink-features=AutomationControlled',
+                '--disable-infobars',
+                '--no-first-run',
+                '--no-default-browser-check',
+            ]
 
         browser = playwright_instance.chromium.launch(
             headless=HEADLESS,
             args=browser_args
         )
 
-        # Создаем контекст с прокси (если есть)
-        context_options = {
-            'viewport': {'width': 1920, 'height': 1080},
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
+        # Создаем контекст (с учетом antidetect fingerprint)
+        if fingerprint:
+            context_options = get_antidetect_context_options(fingerprint)
+        else:
+            context_options = {
+                'viewport': {'width': 1920, 'height': 1080},
+                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
 
         if playwright_proxy:
             context_options['proxy'] = playwright_proxy
 
         context = browser.new_context(**context_options)
         page = context.new_page()
+
+        # 🔥 Применяем stealth скрипт к странице
+        if fingerprint:
+            apply_stealth_to_page(page, fingerprint)
 
         page.set_default_timeout(DEFAULT_TIMEOUT)
         page.set_default_navigation_timeout(NAVIGATION_TIMEOUT)
