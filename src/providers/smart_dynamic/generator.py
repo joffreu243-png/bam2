@@ -3154,52 +3154,142 @@ def _find_free_port(start_port: int = 10800) -> int:
 def create_socks5_tunnel(proxy_type: str, host: str, port: str, login: str, password: str) -> tuple:
     """
     Создать локальный HTTP туннель для SOCKS5 с авторизацией.
+    Использует встроенный Python скрипт (без внешних зависимостей).
 
     Returns:
         (local_port, process) или (None, None) если не удалось
     """
     global _proxy_tunnels
     import sys
-    from urllib.parse import quote
+    import tempfile
+    import os
 
     try:
         local_port = _find_free_port(10800 + len(_proxy_tunnels))
 
-        # URL-encode логин и пароль (для спецсимволов типа - @ : и т.д.)
-        login_encoded = quote(login, safe='')
-        password_encoded = quote(password, safe='')
-
-        # pproxy формат: socks5://user:pass@host:port
-        remote_url = f"{proxy_type}://{login_encoded}:{password_encoded}@{host}:{port}"
-
         print(f"[PROXY TUNNEL] 🔧 Creating tunnel localhost:{local_port} -> {proxy_type}://{host}:{port}")
         print(f"[PROXY TUNNEL] Auth: {login[:25]}...:{password[:5]}...")
 
-        # Используем sys.executable для правильного python
+        # Экранируем кавычки в логине/пароле
+        login_escaped = login.replace('\\\\', '\\\\\\\\').replace('"', '\\\\"')
+        password_escaped = password.replace('\\\\', '\\\\\\\\').replace('"', '\\\\"')
+
+        # Создаём Python скрипт для туннеля
+        tunnel_script = f'''# -*- coding: utf-8 -*-
+import socket
+import threading
+import struct
+import sys
+
+SOCKS5_HOST = "{host}"
+SOCKS5_PORT = {port}
+SOCKS5_USER = "{login_escaped}"
+SOCKS5_PASS = "{password_escaped}"
+LOCAL_PORT = {local_port}
+
+def socks5_connect(target_host, target_port):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(30)
+    sock.connect((SOCKS5_HOST, SOCKS5_PORT))
+    # Auth methods: 0x00=no auth, 0x02=user/pass
+    sock.send(b"\\x05\\x02\\x00\\x02")
+    resp = sock.recv(2)
+    if len(resp) < 2:
+        raise Exception("SOCKS5 no response")
+    if resp[1] == 2:
+        auth = bytes([1, len(SOCKS5_USER)]) + SOCKS5_USER.encode() + bytes([len(SOCKS5_PASS)]) + SOCKS5_PASS.encode()
+        sock.send(auth)
+        auth_resp = sock.recv(2)
+        if len(auth_resp) < 2 or auth_resp[1] != 0:
+            raise Exception("SOCKS5 auth failed")
+    elif resp[1] != 0:
+        raise Exception(f"SOCKS5 method error")
+    # Connect
+    req = b"\\x05\\x01\\x00\\x03" + bytes([len(target_host)]) + target_host.encode() + struct.pack(">H", target_port)
+    sock.send(req)
+    resp = sock.recv(10)
+    if len(resp) < 2 or resp[1] != 0:
+        raise Exception("SOCKS5 connect failed")
+    return sock
+
+def forward(src, dst):
+    try:
+        while True:
+            data = src.recv(8192)
+            if not data:
+                break
+            dst.sendall(data)
+    except:
+        pass
+    try: src.close()
+    except: pass
+    try: dst.close()
+    except: pass
+
+def handle_client(client):
+    try:
+        req = client.recv(8192).decode("utf-8", errors="ignore")
+        if not req.startswith("CONNECT"):
+            client.send(b"HTTP/1.1 400 Bad Request\\r\\n\\r\\n")
+            client.close()
+            return
+        line = req.split("\\r\\n")[0]
+        target = line.split()[1]
+        h, p = target.rsplit(":", 1)
+        remote = socks5_connect(h, int(p))
+        client.send(b"HTTP/1.1 200 Connection Established\\r\\n\\r\\n")
+        t1 = threading.Thread(target=forward, args=(client, remote), daemon=True)
+        t2 = threading.Thread(target=forward, args=(remote, client), daemon=True)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+    except Exception as e:
+        print(f"[TUNNEL] {{e}}", file=sys.stderr)
+        try: client.close()
+        except: pass
+
+def main():
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", LOCAL_PORT))
+    srv.listen(50)
+    print(f"[TUNNEL] OK port {{LOCAL_PORT}}", file=sys.stderr)
+    while True:
+        c, a = srv.accept()
+        threading.Thread(target=handle_client, args=(c,), daemon=True).start()
+
+if __name__ == "__main__":
+    main()
+'''
+
+        # Сохраняем скрипт во временный файл
+        fd, script_path = tempfile.mkstemp(suffix='.py', prefix='socks_tunnel_')
+        os.write(fd, tunnel_script.encode('utf-8'))
+        os.close(fd)
+
+        # Запускаем скрипт
         process = subprocess.Popen(
-            [sys.executable, '-m', 'pproxy', '-l', f'http://127.0.0.1:{local_port}', '-r', remote_url],
+            [sys.executable, script_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
 
-        # Даём время на запуск
-        time.sleep(1.0)
+        # Даём время на запуск и проверяем вывод
+        time.sleep(0.5)
 
         if process.poll() is not None:
-            # Процесс завершился - читаем ошибку
             stdout, stderr = process.communicate()
-            error_msg = stderr.decode() if stderr else stdout.decode() if stdout else 'Unknown error'
-            print(f"[PROXY TUNNEL] ❌ Failed to start tunnel: {error_msg}")
+            error_msg = stderr.decode() if stderr else 'Unknown error'
+            print(f"[PROXY TUNNEL] ❌ Failed: {error_msg}")
+            os.unlink(script_path)
             return None, None
 
-        _proxy_tunnels[local_port] = process
-        print(f"[PROXY TUNNEL] ✅ Tunnel created on port {local_port}")
+        _proxy_tunnels[local_port] = {'process': process, 'script': script_path}
+        print(f"[PROXY TUNNEL] ✅ Tunnel ready on port {local_port}")
 
         return local_port, process
 
-    except FileNotFoundError:
-        print(f"[PROXY TUNNEL] ❌ pproxy not found! Run: pip install pproxy")
-        return None, None
     except Exception as e:
         print(f"[PROXY TUNNEL] ❌ Error: {e}")
         import traceback
@@ -3209,15 +3299,29 @@ def create_socks5_tunnel(proxy_type: str, host: str, port: str, login: str, pass
 def close_tunnel(local_port: int):
     """Закрыть туннель."""
     global _proxy_tunnels
+    import os
     if local_port in _proxy_tunnels:
+        tunnel_data = _proxy_tunnels[local_port]
+        process = tunnel_data.get('process') if isinstance(tunnel_data, dict) else tunnel_data
+        script_path = tunnel_data.get('script') if isinstance(tunnel_data, dict) else None
+
+        # Завершаем процесс
         try:
-            _proxy_tunnels[local_port].terminate()
-            _proxy_tunnels[local_port].wait(timeout=2)
+            process.terminate()
+            process.wait(timeout=2)
         except:
             try:
-                _proxy_tunnels[local_port].kill()
+                process.kill()
             except:
                 pass
+
+        # Удаляем временный скрипт
+        if script_path:
+            try:
+                os.unlink(script_path)
+            except:
+                pass
+
         del _proxy_tunnels[local_port]
         print(f"[PROXY TUNNEL] Closed tunnel on port {local_port}")
 
