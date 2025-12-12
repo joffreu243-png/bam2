@@ -2262,6 +2262,13 @@ def run_iteration(page, data_row: Dict, iteration_number: int):
         if not code or not code.strip():
             return "        # Нет дополнительных действий"
 
+        # 🔧 Удаляем 'await' - Playwright в sync режиме не использует await
+        import re
+        code = re.sub(r'\bawait\s+', '', code)
+
+        # 🔧 Удаляем точки с запятой в конце строк (JavaScript синтаксис)
+        code = re.sub(r';\s*$', '', code, flags=re.MULTILINE)
+
         lines = code.split('\n')
         cleaned = []
 
