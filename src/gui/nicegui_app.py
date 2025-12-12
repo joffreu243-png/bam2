@@ -469,19 +469,19 @@ class BrowserAutomatorApp:
             ui.button('⏹ STOP', on_click=self.stop_all).classes('hitech-btn-danger').style('height: 40px; padding: 0 20px;')
             ui.button('🧪 TEST (1)', on_click=lambda: self.run_script(test=True)).classes('hitech-btn').style('height: 40px; padding: 0 20px;')
 
-        # Main content - two columns
-        with ui.row().classes('w-full gap-4').style('flex: 1; min-height: 0; height: calc(100vh - 200px);'):
-            # Left: Code editor - takes full height
-            with ui.column().classes('hitech-card').style('flex: 6; min-height: 0; padding: 0; display: flex; flex-direction: column; height: 100%;'):
+        # Main content - two columns (stretch to match heights)
+        with ui.row().classes('w-full gap-4').style('flex: 1; min-height: 0; align-items: stretch;'):
+            # Left: Code editor - matches height of right panel
+            with ui.column().classes('hitech-card').style('flex: 6; padding: 0; display: flex; flex-direction: column; overflow: hidden;'):
                 # Code header
-                with ui.row().classes('w-full items-center justify-between panel-header'):
+                with ui.row().classes('w-full items-center justify-between panel-header').style('flex-shrink: 0;'):
                     ui.label('📝 AUTOMATION CODE').style('color: #e0e0e5; font-weight: 600;')
                     with ui.row().classes('gap-2'):
                         ui.button('📂 Load', on_click=self.load_script).classes('hitech-btn').style('font-size: 11px;')
                         ui.button('📋 Paste', on_click=self.paste_clipboard).classes('hitech-btn').style('font-size: 11px;')
                         ui.button('✨ Generate', on_click=self.generate_script).classes('hitech-btn-primary').style('font-size: 11px;')
 
-                # Code editor - fills remaining space (100% of container)
+                # Code editor - fills remaining space with internal scroll
                 default_code = '''# Вставьте код из Playwright Recorder или пишите вручную
 # Формат: page.goto(), page.get_by_role().click(), page.fill() и т.д.
 
@@ -498,10 +498,10 @@ page.goto("https://example.com")
                 self.code_editor = ui.textarea(
                     value=default_code,
                     placeholder='Вставьте код из Playwright Recorder...'
-                ).classes('hitech-code w-full h-full').style('flex: 1; min-height: 400px; height: 100%; resize: none;')
+                ).classes('hitech-code w-full').style('flex: 1; min-height: 0; resize: none; overflow-y: auto;')
 
             # Right: Settings panel
-            with ui.scroll_area().classes('hitech-card').style('flex: 4; height: 100%; padding: 0;'):
+            with ui.scroll_area().classes('hitech-card').style('flex: 4; padding: 0;'):
                 with ui.column().classes('w-full gap-4').style('padding: 16px;'):
                     # Red Flags section
                     with ui.column().classes('w-full gap-2'):
