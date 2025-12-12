@@ -520,6 +520,7 @@ _next_port_index = 0  # Счетчик для назначения портов
         # Прокси конфигурация
         proxies_list = proxy_list_config.get('proxies', [])
         rotation_mode = proxy_list_config.get('rotation_mode', 'random')
+        default_type = proxy_list_config.get('default_type', 'socks5')  # socks5 по умолчанию
         use_proxy_list = len(proxies_list) > 0
 
         if use_proxy_list:
@@ -527,6 +528,7 @@ _next_port_index = 0  # Счетчик для назначения портов
 USE_PROXY_LIST = True
 PROXY_LIST = {json.dumps(proxies_list, ensure_ascii=False, indent=2)}
 PROXY_ROTATION_MODE = "{rotation_mode}"
+PROXY_DEFAULT_TYPE = "{default_type}"  # Тип для прокси без type:// префикса
 
 '''
         else:
@@ -534,6 +536,7 @@ PROXY_ROTATION_MODE = "{rotation_mode}"
             config += f'''# Прокси (одиночный)
 USE_PROXY_LIST = False
 USE_PROXY = {proxy_enabled}
+PROXY_DEFAULT_TYPE = "socks5"  # Тип по умолчанию
 '''
 
             if proxy_enabled:
@@ -767,7 +770,10 @@ def initialize_nine_proxy_ports() -> bool:
 # ============================================================
 
 def parse_proxy_string(proxy_string: str) -> Optional[Dict]:
-    """Парсинг прокси строки"""
+    """
+    Парсинг прокси строки
+    Если type:// не указан, используется PROXY_DEFAULT_TYPE (по умолчанию socks5)
+    """
     try:
         proxy_string = proxy_string.strip()
 
@@ -793,11 +799,23 @@ def parse_proxy_string(proxy_string: str) -> Optional[Dict]:
                 'password': ''
             }
 
+        # type://host:port:login:password
+        match = re.match(r'^(https?|socks5)://([^:]+):(\\d+):([^:]+):([^:]+)$', proxy_string)
+        if match:
+            return {
+                'type': match.group(1),
+                'host': match.group(2),
+                'port': match.group(3),
+                'login': match.group(4),
+                'password': match.group(5)
+            }
+
+        # 🔥 БЕЗ type:// - используем PROXY_DEFAULT_TYPE
         # host:port:login:password
         match = re.match(r'^([^:]+):(\\d+):([^:]+):([^:]+)$', proxy_string)
         if match:
             return {
-                'type': 'http',
+                'type': PROXY_DEFAULT_TYPE,  # socks5 по умолчанию
                 'host': match.group(1),
                 'port': match.group(2),
                 'login': match.group(3),
@@ -808,7 +826,7 @@ def parse_proxy_string(proxy_string: str) -> Optional[Dict]:
         match = re.match(r'^([^:]+):(\\d+)$', proxy_string)
         if match:
             return {
-                'type': 'http',
+                'type': PROXY_DEFAULT_TYPE,  # socks5 по умолчанию
                 'host': match.group(1),
                 'port': match.group(2),
                 'login': '',

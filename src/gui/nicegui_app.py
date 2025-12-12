@@ -283,6 +283,7 @@ class BrowserAutomatorApp:
 
     def __init__(self):
         self.config = {}
+        self.config_path = Path(__file__).parent.parent.parent / 'config.json'
         self.api: Optional[OctobrowserAPI] = None
         self.parser = ScriptParser()
         self.data_parser = SmartDataParser()
@@ -297,7 +298,7 @@ class BrowserAutomatorApp:
         # UI references
         self.code_editor = None
         self.output_area = None
-        self.threads_container = None
+        self.iterations_container = None
         self.stats_labels = {}
 
         # Script runner
@@ -308,23 +309,22 @@ class BrowserAutomatorApp:
 
     def load_config(self):
         """Load configuration from config.json"""
-        config_path = Path(__file__).parent.parent.parent / 'config.json'
         try:
-            with open(config_path, 'r', encoding='utf-8') as f:
+            with open(self.config_path, 'r', encoding='utf-8') as f:
                 self.config = json.load(f)
         except FileNotFoundError:
             self.config = {
                 'octobrowser': {'api_base_url': 'https://app.octobrowser.net/api/v2/automation', 'api_token': ''},
                 'sms': {'provider': 'daisysms', 'api_key': '', 'service': 'ds'},
-                'proxy': {'enabled': False, 'type': 'http', 'host': '', 'port': '', 'login': '', 'password': ''},
+                'proxy': {'enabled': False, 'type': 'socks5', 'host': '', 'port': '', 'login': '', 'password': ''},
+                'proxy_list': {'proxies': [], 'rotation_mode': 'random', 'default_type': 'socks5'},
                 'script_settings': {'output_directory': 'generated_scripts'}
             }
 
     def save_config(self):
         """Save configuration to config.json"""
-        config_path = Path(__file__).parent.parent.parent / 'config.json'
         try:
-            with open(config_path, 'w', encoding='utf-8') as f:
+            with open(self.config_path, 'w', encoding='utf-8') as f:
                 json.dump(self.config, f, indent=2, ensure_ascii=False)
             ui.notify('Settings saved', type='positive')
         except Exception as e:
@@ -646,19 +646,27 @@ page.goto("https://example.com")
                         ui.label('📋 PROXY LIST').style('color: #ffcc00; font-weight: 600; letter-spacing: 1px;')
                         ui.button('📂 Load from File', on_click=self.load_proxy_list).classes('hitech-btn').style('font-size: 11px;')
 
-                    ui.label('One proxy per line: type://host:port:user:pass or host:port:user:pass').style('color: #8888a0; font-size: 12px;')
+                    ui.label('One proxy per line: host:port:user:pass (без type:// = используется Default Type)').style('color: #8888a0; font-size: 12px;')
 
                     self.proxy_list_input = ui.textarea(
                         value='\n'.join(self.config.get('proxy_list', {}).get('proxies', [])),
-                        placeholder='socks5://127.0.0.1:6000\nhttp://proxy.example.com:8080:user:pass\n192.168.1.1:3128:admin:secret'
+                        placeholder='127.0.0.1:6000:user:pass\n192.168.1.1:3128:admin:secret\nsocks5://explicit.proxy.com:1080'
                     ).classes('hitech-code w-full').style('height: 200px; font-family: monospace;')
 
                     with ui.row().classes('w-full gap-4 items-center'):
                         with ui.column().classes('gap-1'):
+                            ui.label('Default Type').style('color: #8888a0; font-size: 11px;')
+                            self.proxy_default_type = ui.select(
+                                options=['socks5', 'http', 'https'],
+                                value=self.config.get('proxy_list', {}).get('default_type', 'socks5')
+                            ).classes('hitech-select').style('width: 120px;')
+                            ui.label('для прокси без type://').style('color: #666; font-size: 9px;')
+
+                        with ui.column().classes('gap-1'):
                             ui.label('Rotation Mode').style('color: #8888a0; font-size: 11px;')
                             self.proxy_rotation_select = ui.select(
                                 options=['sequential', 'random', 'round-robin'],
-                                value=self.config.get('proxy_list', {}).get('rotation_mode', 'sequential')
+                                value=self.config.get('proxy_list', {}).get('rotation_mode', 'random')
                             ).classes('hitech-select').style('width: 150px;')
 
                         self.proxy_retry_checkbox = ui.checkbox(
@@ -743,10 +751,18 @@ page.goto("https://example.com")
 
     def _get_current_proxy_mode(self):
         """Determine current proxy mode from config"""
+        # First check if there's a saved proxy_mode
+        saved_mode = self.config.get('proxy_mode')
+        if saved_mode and saved_mode in ['Disabled', 'Single Proxy', 'Proxy List', '9Proxy API']:
+            return saved_mode
+
+        # Otherwise determine from enabled flags
         if self.config.get('nine_proxy', {}).get('enabled', False):
             return '9Proxy API'
-        elif self.config.get('proxy_list', {}).get('proxies', []):
+        elif self.config.get('proxy_list', {}).get('enabled', False):
             return 'Proxy List'
+        elif self.config.get('proxy_list', {}).get('proxies', []):
+            return 'Proxy List'  # Has proxies in list
         elif self.config.get('proxy', {}).get('enabled', False):
             return 'Single Proxy'
         return 'Disabled'
@@ -754,9 +770,18 @@ page.goto("https://example.com")
     def save_proxy_settings(self):
         """Save proxy settings"""
         try:
+            # Get selected proxy mode
+            proxy_mode = self.proxy_mode_select.value
+            self.config['proxy_mode'] = proxy_mode
+
+            # Set enabled flags based on mode
+            single_enabled = (proxy_mode == 'Single Proxy')
+            list_enabled = (proxy_mode == 'Proxy List')
+            nine_enabled = (proxy_mode == '9Proxy API')
+
             # Single Proxy
             self.config.setdefault('proxy', {})
-            self.config['proxy']['enabled'] = self.proxy_enabled_checkbox.value
+            self.config['proxy']['enabled'] = single_enabled
             self.config['proxy']['type'] = self.proxy_type_select.value
             self.config['proxy']['host'] = self.proxy_host_input.value
             self.config['proxy']['port'] = self.proxy_port_input.value
@@ -766,13 +791,15 @@ page.goto("https://example.com")
             # Proxy List
             self.config.setdefault('proxy_list', {})
             proxy_lines = [line.strip() for line in self.proxy_list_input.value.split('\n') if line.strip()]
+            self.config['proxy_list']['enabled'] = list_enabled
             self.config['proxy_list']['proxies'] = proxy_lines
+            self.config['proxy_list']['default_type'] = self.proxy_default_type.value
             self.config['proxy_list']['rotation_mode'] = self.proxy_rotation_select.value
             self.config['proxy_list']['retry_on_failure'] = self.proxy_retry_checkbox.value
 
             # 9Proxy
             self.config.setdefault('nine_proxy', {})
-            self.config['nine_proxy']['enabled'] = self.nine_proxy_enabled.value
+            self.config['nine_proxy']['enabled'] = nine_enabled
             self.config['nine_proxy']['api_url'] = self.nine_proxy_url.value
             ports_str = self.nine_proxy_ports.value
             self.config['nine_proxy']['ports'] = [int(p.strip()) for p in ports_str.split(',') if p.strip().isdigit()]
@@ -794,7 +821,11 @@ page.goto("https://example.com")
                 count = len(proxy_lines)
                 self.proxy_count_label.set_text(f'{count} proxies')
 
-            ui.notify('Proxy settings saved', type='positive')
+            # Also update the checkbox to reflect the mode
+            self.proxy_enabled_checkbox.set_value(single_enabled)
+            self.nine_proxy_enabled.set_value(nine_enabled)
+
+            ui.notify(f'Proxy settings saved (Mode: {proxy_mode})', type='positive')
         except Exception as e:
             ui.notify(f'Error saving: {e}', type='negative')
 
