@@ -3132,13 +3132,98 @@ if __name__ == "__main__":
 # LOCAL CHROMIUM MODE - Функции браузера
 # ============================================================
 
+import subprocess
+import socket
+import atexit
+
+# Глобальное хранилище туннелей
+_proxy_tunnels = {}
+
+def _find_free_port(start_port: int = 10800) -> int:
+    """Найти свободный порт."""
+    port = start_port
+    while port < 65535:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(('127.0.0.1', port))
+                return port
+            except OSError:
+                port += 1
+    raise RuntimeError("No free ports available")
+
+def create_socks5_tunnel(proxy_type: str, host: str, port: str, login: str, password: str) -> tuple:
+    """
+    Создать локальный HTTP туннель для SOCKS5 с авторизацией.
+
+    Returns:
+        (local_port, process) или (None, None) если не удалось
+    """
+    global _proxy_tunnels
+
+    try:
+        local_port = _find_free_port(10800 + len(_proxy_tunnels))
+
+        # pproxy: локальный HTTP -> удалённый SOCKS5 с auth
+        remote_url = f"{proxy_type}://{login}:{password}@{host}:{port}"
+
+        print(f"[PROXY TUNNEL] 🔧 Creating tunnel localhost:{local_port} -> {proxy_type}://{host}:{port}")
+
+        process = subprocess.Popen(
+            ['python', '-m', 'pproxy', '-l', f'http://127.0.0.1:{local_port}', '-r', remote_url],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+        # Даём время на запуск
+        time.sleep(0.5)
+
+        if process.poll() is not None:
+            print(f"[PROXY TUNNEL] ❌ Failed to start tunnel")
+            return None, None
+
+        _proxy_tunnels[local_port] = process
+        print(f"[PROXY TUNNEL] ✅ Tunnel created on port {local_port}")
+
+        return local_port, process
+
+    except FileNotFoundError:
+        print(f"[PROXY TUNNEL] ❌ pproxy not found! Run: pip install pproxy")
+        return None, None
+    except Exception as e:
+        print(f"[PROXY TUNNEL] ❌ Error: {e}")
+        return None, None
+
+def close_tunnel(local_port: int):
+    """Закрыть туннель."""
+    global _proxy_tunnels
+    if local_port in _proxy_tunnels:
+        try:
+            _proxy_tunnels[local_port].terminate()
+            _proxy_tunnels[local_port].wait(timeout=2)
+        except:
+            try:
+                _proxy_tunnels[local_port].kill()
+            except:
+                pass
+        del _proxy_tunnels[local_port]
+        print(f"[PROXY TUNNEL] Closed tunnel on port {local_port}")
+
+def close_all_tunnels():
+    """Закрыть все туннели."""
+    global _proxy_tunnels
+    for port in list(_proxy_tunnels.keys()):
+        close_tunnel(port)
+    print("[PROXY TUNNEL] All tunnels closed")
+
+# Регистрируем cleanup
+atexit.register(close_all_tunnels)
+
 def get_proxy_for_playwright(thread_id: int, iteration_number: int) -> Optional[Dict]:
     """
     Получить настройки прокси для Playwright в формате:
-    {'server': 'http://host:port', 'username': 'login', 'password': 'pass'}
+    {'server': 'http://host:port', 'username': 'login', 'password': 'pass', 'tunnel_port': port}
 
-    ВАЖНО: Chromium НЕ поддерживает SOCKS5 с авторизацией!
-    Для SOCKS5 с auth используйте HTTP прокси или whitelist по IP.
+    Автоматически создаёт туннель для SOCKS5 с авторизацией!
     """
     proxy_dict = get_proxy_for_thread(thread_id, iteration_number)
 
@@ -3155,18 +3240,26 @@ def get_proxy_for_playwright(thread_id: int, iteration_number: int) -> Optional[
     if not host or not port:
         return None
 
-    # 🔥 ВАЖНО: Chromium не поддерживает SOCKS5 с авторизацией!
-    if proxy_type == 'socks5' and login and password:
-        print(f"[PROXY] [WARNING] ⚠️ SOCKS5 с авторизацией НЕ поддерживается Chromium!")
-        print(f"[PROXY] [WARNING] Варианты:")
-        print(f"[PROXY] [WARNING]   1. Используйте HTTP/HTTPS прокси с авторизацией")
-        print(f"[PROXY] [WARNING]   2. Используйте SOCKS5 без авторизации (whitelist по IP)")
-        print(f"[PROXY] [WARNING]   3. Используйте локальный proxy-chain туннель")
-        print(f"[PROXY] [INFO] Пробуем подключиться БЕЗ авторизации...")
-        # Пробуем без авторизации (вдруг whitelist настроен)
-        login = ''
-        password = ''
+    # 🔥 SOCKS5 с авторизацией - создаём туннель!
+    if proxy_type in ['socks5', 'socks4'] and login and password:
+        print(f"[PROXY] SOCKS5 с авторизацией - создаём туннель...")
 
+        tunnel_port, _ = create_socks5_tunnel(proxy_type, host, port, login, password)
+
+        if tunnel_port:
+            # Используем локальный HTTP туннель
+            return {
+                'server': f'http://127.0.0.1:{tunnel_port}',
+                'tunnel_port': tunnel_port  # Запоминаем для закрытия
+            }
+        else:
+            print(f"[PROXY] ⚠️ Tunnel failed, trying without auth...")
+            # Fallback - пробуем без авторизации
+            return {
+                'server': f'{proxy_type}://{host}:{port}'
+            }
+
+    # HTTP/HTTPS с авторизацией - работает напрямую
     playwright_proxy = {
         'server': f'{proxy_type}://{host}:{port}'
     }
@@ -3612,6 +3705,10 @@ def process_task(task_data: tuple) -> Dict:
                 playwright_instance.stop()
             except:
                 pass
+
+        # 4. Закрыть прокси-туннель если был создан
+        if playwright_proxy and 'tunnel_port' in playwright_proxy:
+            close_tunnel(playwright_proxy['tunnel_port'])
 
     return result
 
