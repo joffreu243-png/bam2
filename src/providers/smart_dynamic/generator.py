@@ -3159,6 +3159,7 @@ def create_socks5_tunnel(proxy_type: str, host: str, port: str, login: str, pass
         (local_port, process) или (None, None) если не удалось
     """
     global _proxy_tunnels
+    import sys
 
     try:
         local_port = _find_free_port(10800 + len(_proxy_tunnels))
@@ -3167,18 +3168,23 @@ def create_socks5_tunnel(proxy_type: str, host: str, port: str, login: str, pass
         remote_url = f"{proxy_type}://{login}:{password}@{host}:{port}"
 
         print(f"[PROXY TUNNEL] 🔧 Creating tunnel localhost:{local_port} -> {proxy_type}://{host}:{port}")
+        print(f"[PROXY TUNNEL] Auth: {login[:10]}...:{password[:5]}...")
 
+        # Используем sys.executable для правильного python
         process = subprocess.Popen(
-            ['python', '-m', 'pproxy', '-l', f'http://127.0.0.1:{local_port}', '-r', remote_url],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            [sys.executable, '-m', 'pproxy', '-l', f'http://127.0.0.1:{local_port}', '-r', remote_url],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
 
         # Даём время на запуск
-        time.sleep(0.5)
+        time.sleep(1.0)
 
         if process.poll() is not None:
-            print(f"[PROXY TUNNEL] ❌ Failed to start tunnel")
+            # Процесс завершился - читаем ошибку
+            stdout, stderr = process.communicate()
+            error_msg = stderr.decode() if stderr else stdout.decode() if stdout else 'Unknown error'
+            print(f"[PROXY TUNNEL] ❌ Failed to start tunnel: {error_msg}")
             return None, None
 
         _proxy_tunnels[local_port] = process
@@ -3191,6 +3197,8 @@ def create_socks5_tunnel(proxy_type: str, host: str, port: str, login: str, pass
         return None, None
     except Exception as e:
         print(f"[PROXY TUNNEL] ❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
         return None, None
 
 def close_tunnel(local_port: int):
