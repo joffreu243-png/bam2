@@ -413,6 +413,7 @@ class BrowserAutomatorApp:
                 script_tab = ui.tab('📝 SCRIPT')
                 data_tab = ui.tab('📊 DATA')
                 proxy_tab = ui.tab('🌐 PROXY')
+                captcha_tab = ui.tab('🔓 CAPTCHA')
                 settings_tab = ui.tab('⚙️ SETTINGS')
                 logs_tab = ui.tab('📋 LOGS')
 
@@ -428,6 +429,9 @@ class BrowserAutomatorApp:
 
                 with ui.tab_panel(proxy_tab).style('padding: 20px;'):
                     self._build_proxy_tab()
+
+                with ui.tab_panel(captcha_tab).style('padding: 20px;'):
+                    self._build_captcha_tab()
 
                 with ui.tab_panel(settings_tab).style('padding: 20px;'):
                     self._build_settings_tab()
@@ -830,6 +834,203 @@ page.goto("https://example.com")
             self.nine_proxy_enabled.set_value(nine_enabled)
 
             ui.notify(f'Proxy settings saved (Mode: {proxy_mode})', type='positive')
+        except Exception as e:
+            ui.notify(f'Error saving: {e}', type='negative')
+
+    def _build_captcha_tab(self):
+        """Build the anti-captcha tab with CapSolver integration"""
+        with ui.scroll_area().classes('w-full h-full'):
+            with ui.column().classes('w-full gap-6').style('padding: 20px; max-width: 1000px;'):
+                # === CAPSOLVER SETTINGS ===
+                with ui.column().classes('hitech-card w-full gap-4').style('padding: 20px;'):
+                    with ui.row().classes('items-center gap-4'):
+                        ui.label('🔓 CAPSOLVER ANTI-CAPTCHA').style('color: #ff6b00; font-weight: 600; letter-spacing: 1px;')
+                        ui.link('📖 Docs', 'https://docs.capsolver.com/', new_tab=True).style('font-size: 12px;')
+                        ui.link('🔑 Get API Key', 'https://dashboard.capsolver.com/', new_tab=True).style('font-size: 12px;')
+
+                    # Enable checkbox
+                    with ui.row().classes('items-center gap-4'):
+                        self.captcha_enabled_checkbox = ui.checkbox(
+                            'Enable Anti-Captcha',
+                            value=self.config.get('captcha', {}).get('enabled', False)
+                        ).style('color: #e0e0e5;')
+
+                        # Balance display
+                        self.captcha_balance_label = ui.label('Balance: $0.00').style('color: #00ff88; font-size: 14px;')
+
+                    # API Key
+                    with ui.row().classes('w-full gap-4 items-end'):
+                        with ui.column().classes('flex-1 gap-2'):
+                            ui.label('CapSolver API Key').style('color: #8888a0; font-size: 12px;')
+                            self.captcha_api_key_input = ui.input(
+                                value=self.config.get('captcha', {}).get('api_key', ''),
+                                password=True,
+                                placeholder='CAP-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX'
+                            ).classes('hitech-input w-full')
+
+                        ui.button('Check Balance', on_click=self._check_captcha_balance).classes('hitech-btn').style('height: 40px;')
+
+                # === CAPTCHA TYPES ===
+                with ui.column().classes('hitech-card w-full gap-4').style('padding: 20px;'):
+                    ui.label('🎯 SUPPORTED CAPTCHA TYPES').style('color: #00d4ff; font-weight: 600; letter-spacing: 1px;')
+
+                    with ui.row().classes('w-full gap-6 flex-wrap'):
+                        # reCAPTCHA v2
+                        with ui.column().classes('gap-2').style('min-width: 200px;'):
+                            self.captcha_recaptcha_v2 = ui.checkbox(
+                                'reCAPTCHA v2',
+                                value=self.config.get('captcha', {}).get('recaptcha_v2', True)
+                            ).style('color: #e0e0e5;')
+                            ui.label('Google reCAPTCHA checkbox').style('color: #666; font-size: 11px; margin-left: 28px;')
+
+                        # reCAPTCHA v3
+                        with ui.column().classes('gap-2').style('min-width: 200px;'):
+                            self.captcha_recaptcha_v3 = ui.checkbox(
+                                'reCAPTCHA v3',
+                                value=self.config.get('captcha', {}).get('recaptcha_v3', True)
+                            ).style('color: #e0e0e5;')
+                            ui.label('Invisible score-based').style('color: #666; font-size: 11px; margin-left: 28px;')
+
+                        # hCaptcha
+                        with ui.column().classes('gap-2').style('min-width: 200px;'):
+                            self.captcha_hcaptcha = ui.checkbox(
+                                'hCaptcha',
+                                value=self.config.get('captcha', {}).get('hcaptcha', True)
+                            ).style('color: #e0e0e5;')
+                            ui.label('hCaptcha challenges').style('color: #666; font-size: 11px; margin-left: 28px;')
+
+                        # Turnstile
+                        with ui.column().classes('gap-2').style('min-width: 200px;'):
+                            self.captcha_turnstile = ui.checkbox(
+                                'Cloudflare Turnstile',
+                                value=self.config.get('captcha', {}).get('turnstile', True)
+                            ).style('color: #e0e0e5;')
+                            ui.label('Cloudflare protection').style('color: #666; font-size: 11px; margin-left: 28px;')
+
+                        # Image captcha
+                        with ui.column().classes('gap-2').style('min-width: 200px;'):
+                            self.captcha_image = ui.checkbox(
+                                'Image to Text',
+                                value=self.config.get('captcha', {}).get('image_to_text', True)
+                            ).style('color: #e0e0e5;')
+                            ui.label('Classic image captchas').style('color: #666; font-size: 11px; margin-left: 28px;')
+
+                        # FunCaptcha
+                        with ui.column().classes('gap-2').style('min-width: 200px;'):
+                            self.captcha_funcaptcha = ui.checkbox(
+                                'FunCaptcha',
+                                value=self.config.get('captcha', {}).get('funcaptcha', True)
+                            ).style('color: #e0e0e5;')
+                            ui.label('Arkose Labs puzzles').style('color: #666; font-size: 11px; margin-left: 28px;')
+
+                # === SOLVING OPTIONS ===
+                with ui.column().classes('hitech-card w-full gap-4').style('padding: 20px;'):
+                    ui.label('⚙️ SOLVING OPTIONS').style('color: #00d4ff; font-weight: 600; letter-spacing: 1px;')
+
+                    with ui.row().classes('w-full gap-6'):
+                        # Timeout
+                        with ui.column().classes('gap-2'):
+                            ui.label('Solve Timeout (sec)').style('color: #8888a0; font-size: 12px;')
+                            self.captcha_timeout_input = ui.number(
+                                value=self.config.get('captcha', {}).get('timeout', 120),
+                                min=30, max=300, step=10
+                            ).classes('hitech-input').style('width: 100px;')
+
+                        # reCAPTCHA v3 min score
+                        with ui.column().classes('gap-2'):
+                            ui.label('reCAPTCHA v3 Min Score').style('color: #8888a0; font-size: 12px;')
+                            self.captcha_min_score_input = ui.number(
+                                value=self.config.get('captcha', {}).get('min_score', 0.7),
+                                min=0.1, max=0.9, step=0.1
+                            ).classes('hitech-input').style('width: 100px;')
+
+                    # Auto-detect option
+                    with ui.row().classes('gap-4 mt-2'):
+                        self.captcha_auto_detect = ui.checkbox(
+                            'Auto-detect captcha type on page',
+                            value=self.config.get('captcha', {}).get('auto_detect', True)
+                        ).style('color: #e0e0e5;')
+
+                        self.captcha_use_proxy = ui.checkbox(
+                            'Use proxy for solving (faster, but costs more)',
+                            value=self.config.get('captcha', {}).get('use_proxy', False)
+                        ).style('color: #e0e0e5;')
+
+                # === USAGE EXAMPLE ===
+                with ui.column().classes('hitech-card w-full gap-4').style('padding: 20px;'):
+                    ui.label('📝 HOW TO USE IN YOUR CODE').style('color: #00d4ff; font-weight: 600; letter-spacing: 1px;')
+
+                    code_example = '''# Captcha will be solved automatically when detected
+# Or you can solve manually:
+
+# Auto-detect and solve any captcha on page
+token = solve_captcha(page)
+
+# Solve specific captcha type
+token = solve_captcha(page, captcha_type='recaptcha_v2')
+token = solve_captcha(page, captcha_type='hcaptcha')
+token = solve_captcha(page, captcha_type='turnstile')
+
+# Solve image captcha
+text = solve_image_captcha(image_base64)
+
+# Check if captcha exists on page
+if has_captcha(page):
+    solve_captcha(page)'''
+
+                    ui.code(code_example, language='python').classes('w-full').style('font-size: 12px;')
+
+                # Save button
+                with ui.row().classes('w-full justify-end gap-4 mt-4'):
+                    ui.button('💾 Save Captcha Settings', on_click=self._save_captcha_settings).classes('hitech-btn-primary').style('height: 40px; padding: 0 24px;')
+
+    async def _check_captcha_balance(self):
+        """Check CapSolver balance"""
+        try:
+            api_key = self.captcha_api_key_input.value
+            if not api_key:
+                ui.notify('Please enter API key first', type='warning')
+                return
+
+            import requests
+            response = requests.post(
+                'https://api.capsolver.com/getBalance',
+                json={'clientKey': api_key},
+                timeout=10
+            )
+            data = response.json()
+
+            if data.get('errorId') == 0:
+                balance = data.get('balance', 0)
+                self.captcha_balance_label.set_text(f'Balance: ${balance:.2f}')
+                ui.notify(f'Balance: ${balance:.2f}', type='positive')
+            else:
+                error = data.get('errorDescription', 'Unknown error')
+                ui.notify(f'Error: {error}', type='negative')
+        except Exception as e:
+            ui.notify(f'Error checking balance: {e}', type='negative')
+
+    def _save_captcha_settings(self):
+        """Save captcha settings to config"""
+        try:
+            if 'captcha' not in self.config:
+                self.config['captcha'] = {}
+
+            self.config['captcha']['enabled'] = self.captcha_enabled_checkbox.value
+            self.config['captcha']['api_key'] = self.captcha_api_key_input.value
+            self.config['captcha']['recaptcha_v2'] = self.captcha_recaptcha_v2.value
+            self.config['captcha']['recaptcha_v3'] = self.captcha_recaptcha_v3.value
+            self.config['captcha']['hcaptcha'] = self.captcha_hcaptcha.value
+            self.config['captcha']['turnstile'] = self.captcha_turnstile.value
+            self.config['captcha']['image_to_text'] = self.captcha_image.value
+            self.config['captcha']['funcaptcha'] = self.captcha_funcaptcha.value
+            self.config['captcha']['timeout'] = int(self.captcha_timeout_input.value)
+            self.config['captcha']['min_score'] = float(self.captcha_min_score_input.value)
+            self.config['captcha']['auto_detect'] = self.captcha_auto_detect.value
+            self.config['captcha']['use_proxy'] = self.captcha_use_proxy.value
+
+            self._save_config()
+            ui.notify('Captcha settings saved!', type='positive')
         except Exception as e:
             ui.notify(f'Error saving: {e}', type='negative')
 
@@ -1284,6 +1485,8 @@ page.goto("https://example.com")
                 'simulate_typing': self.config.get('humanize', {}).get('mouse_movement', True),
                 'typing_delay': self.config.get('humanize', {}).get('typing_delay_min', 50),
                 'action_delay': self.config.get('humanize', {}).get('click_delay', 500) / 1000,
+                # Captcha settings
+                'captcha': self.config.get('captcha', {}),
             }
 
             # Log proxy mode

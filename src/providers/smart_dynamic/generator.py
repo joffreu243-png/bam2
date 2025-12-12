@@ -101,6 +101,16 @@ class Generator:
         self.antidetect_country = config.get('antidetect_country', 'auto')  # 'auto' = определять по прокси
         print(f"[GENERATOR DEBUG] Antidetect: enabled={self.antidetect_enabled}, country={self.antidetect_country}")
 
+        # 🔓 Captcha/Anti-captcha настройки (CapSolver)
+        captcha_config = config.get('captcha', {})
+        self.captcha_enabled = captcha_config.get('enabled', False)
+        self.captcha_api_key = captcha_config.get('api_key', '')
+        self.captcha_timeout = captcha_config.get('timeout', 120)
+        self.captcha_min_score = captcha_config.get('min_score', 0.7)
+        self.captcha_auto_detect = captcha_config.get('auto_detect', True)
+        self.captcha_use_proxy = captcha_config.get('use_proxy', False)
+        print(f"[GENERATOR DEBUG] Captcha: enabled={self.captcha_enabled}, auto_detect={self.captcha_auto_detect}")
+
         # Симуляция ввода текста
         self.simulate_typing = config.get('simulate_typing', True)
         self.typing_delay = config.get('typing_delay', 100)
@@ -129,6 +139,11 @@ class Generator:
             script += self._generate_octobrowser_functions(profile_config)
 
         script += self._generate_helpers()
+
+        # 🔓 Captcha solving функции (CapSolver)
+        if self.captcha_enabled:
+            script += self._generate_captcha_functions()
+
         script += self._generate_csv_loader()
         script += self._generate_questions_pool(questions_pool)  # 🔥 СЛОВАРЬ ВОПРОСОВ
         script += self._generate_answer_question_function()  # 🔥 ФУНКЦИЯ ПОИСКА И ОТВЕТА
@@ -3650,6 +3665,350 @@ ANTIDETECT_COUNTRY = "auto"  # 'auto' = определять по прокси, 
 
 print("[ANTIDETECT] 🛡️ Antidetect mode ENABLED")
 '''
+
+    def _generate_captcha_functions(self) -> str:
+        """Генерирует код для решения капчи через CapSolver"""
+        api_key = self.captcha_api_key
+        timeout = self.captcha_timeout
+        min_score = self.captcha_min_score
+        use_proxy = self.captcha_use_proxy
+
+        return f"""# ============================================================
+# 🔓 CAPSOLVER ANTI-CAPTCHA - Автоматическое решение капчи
+# ============================================================
+
+import time
+import requests
+
+CAPSOLVER_API_KEY = "{api_key}"
+CAPSOLVER_TIMEOUT = {timeout}
+CAPSOLVER_MIN_SCORE = {min_score}
+CAPSOLVER_USE_PROXY = {use_proxy}
+
+print("[CAPTCHA] 🔓 CapSolver Anti-Captcha ENABLED")
+
+def _capsolver_create_task(task: dict) -> str:
+    '''Создать задачу в CapSolver и получить taskId'''
+    try:
+        response = requests.post(
+            'https://api.capsolver.com/createTask',
+            json={{'clientKey': CAPSOLVER_API_KEY, 'task': task}},
+            timeout=30
+        )
+        data = response.json()
+        if data.get('errorId', 1) != 0:
+            raise Exception(data.get('errorDescription', 'Unknown error'))
+        return data.get('taskId')
+    except Exception as e:
+        print(f"[CAPTCHA] ❌ createTask failed: {{e}}")
+        return None
+
+def _capsolver_get_result(task_id: str, timeout: int = CAPSOLVER_TIMEOUT) -> dict:
+    '''Ожидать результат решения капчи'''
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            response = requests.post(
+                'https://api.capsolver.com/getTaskResult',
+                json={{'clientKey': CAPSOLVER_API_KEY, 'taskId': task_id}},
+                timeout=30
+            )
+            data = response.json()
+            status = data.get('status')
+            if status == 'ready':
+                return data.get('solution', {{}})
+            elif status == 'failed':
+                raise Exception(data.get('errorDescription', 'Task failed'))
+            time.sleep(3)
+        except Exception as e:
+            print(f"[CAPTCHA] ⚠️ getTaskResult error: {{e}}")
+            time.sleep(3)
+    return None
+
+def solve_recaptcha_v2(page, site_key: str = None, timeout: int = CAPSOLVER_TIMEOUT) -> str:
+    '''
+    Решить reCAPTCHA v2 на странице
+
+    Args:
+        page: Playwright page object
+        site_key: Ключ сайта (если None - определяется автоматически)
+        timeout: Таймаут ожидания решения
+
+    Returns:
+        g-recaptcha-response токен или None
+    '''
+    url = page.url
+
+    # Автоопределение site_key
+    if not site_key:
+        try:
+            site_key = page.evaluate('''() => {{
+                const el = document.querySelector('[data-sitekey]');
+                return el ? el.getAttribute('data-sitekey') : null;
+            }}''')
+        except:
+            pass
+
+    if not site_key:
+        print("[CAPTCHA] ❌ reCAPTCHA site_key not found")
+        return None
+
+    print(f"[CAPTCHA] 🔄 Solving reCAPTCHA v2... sitekey={{site_key[:20]}}...")
+
+    task = {{
+        'type': 'ReCaptchaV2TaskProxyLess',
+        'websiteURL': url,
+        'websiteKey': site_key
+    }}
+
+    task_id = _capsolver_create_task(task)
+    if not task_id:
+        return None
+
+    solution = _capsolver_get_result(task_id, timeout)
+    if solution:
+        token = solution.get('gRecaptchaResponse')
+        if token:
+            # Инжектим токен в страницу
+            try:
+                page.evaluate(f'''(token) => {{{{
+                    const textarea = document.querySelector('[name="g-recaptcha-response"]');
+                    if (textarea) textarea.value = token;
+                    // Вызываем callback если есть
+                    if (typeof ___grecaptcha_cfg !== 'undefined') {{{{
+                        Object.keys(___grecaptcha_cfg.clients).forEach(key => {{{{
+                            const client = ___grecaptcha_cfg.clients[key];
+                            if (client.callback) client.callback(token);
+                        }}}});
+                    }}}}
+                }}}}''', token)
+                print(f"[CAPTCHA] ✅ reCAPTCHA v2 solved!")
+            except Exception as e:
+                print(f"[CAPTCHA] ⚠️ Token inject error: {{e}}")
+            return token
+
+    print("[CAPTCHA] ❌ reCAPTCHA v2 solving failed")
+    return None
+
+def solve_recaptcha_v3(page, site_key: str = None, action: str = '', timeout: int = CAPSOLVER_TIMEOUT) -> str:
+    '''Решить reCAPTCHA v3'''
+    url = page.url
+
+    if not site_key:
+        try:
+            site_key = page.evaluate('''() => {{
+                const scripts = document.querySelectorAll('script[src*="recaptcha"]');
+                for (const s of scripts) {{
+                    const match = s.src.match(/render=([^&]+)/);
+                    if (match) return match[1];
+                }}
+                return null;
+            }}''')
+        except:
+            pass
+
+    if not site_key:
+        print("[CAPTCHA] ❌ reCAPTCHA v3 site_key not found")
+        return None
+
+    print(f"[CAPTCHA] 🔄 Solving reCAPTCHA v3...")
+
+    task = {{
+        'type': 'ReCaptchaV3TaskProxyLess',
+        'websiteURL': url,
+        'websiteKey': site_key,
+        'pageAction': action,
+        'minScore': CAPSOLVER_MIN_SCORE
+    }}
+
+    task_id = _capsolver_create_task(task)
+    if not task_id:
+        return None
+
+    solution = _capsolver_get_result(task_id, timeout)
+    if solution:
+        token = solution.get('gRecaptchaResponse')
+        if token:
+            print(f"[CAPTCHA] ✅ reCAPTCHA v3 solved!")
+            return token
+
+    return None
+
+def solve_hcaptcha(page, site_key: str = None, timeout: int = CAPSOLVER_TIMEOUT) -> str:
+    '''Решить hCaptcha'''
+    url = page.url
+
+    if not site_key:
+        try:
+            site_key = page.evaluate('''() => {{
+                const el = document.querySelector('[data-sitekey]');
+                return el ? el.getAttribute('data-sitekey') : null;
+            }}''')
+        except:
+            pass
+
+    if not site_key:
+        print("[CAPTCHA] ❌ hCaptcha site_key not found")
+        return None
+
+    print(f"[CAPTCHA] 🔄 Solving hCaptcha...")
+
+    task = {{
+        'type': 'HCaptchaTaskProxyLess',
+        'websiteURL': url,
+        'websiteKey': site_key
+    }}
+
+    task_id = _capsolver_create_task(task)
+    if not task_id:
+        return None
+
+    solution = _capsolver_get_result(task_id, timeout)
+    if solution:
+        token = solution.get('gRecaptchaResponse')
+        if token:
+            try:
+                page.evaluate(f'''(token) => {{{{
+                    document.querySelector('[name="h-captcha-response"]').value = token;
+                    document.querySelector('[name="g-recaptcha-response"]').value = token;
+                }}}}''', token)
+                print(f"[CAPTCHA] ✅ hCaptcha solved!")
+            except:
+                pass
+            return token
+
+    return None
+
+def solve_turnstile(page, site_key: str = None, timeout: int = CAPSOLVER_TIMEOUT) -> str:
+    '''Решить Cloudflare Turnstile'''
+    url = page.url
+
+    if not site_key:
+        try:
+            site_key = page.evaluate('''() => {{
+                const el = document.querySelector('[data-sitekey]');
+                return el ? el.getAttribute('data-sitekey') : null;
+            }}''')
+        except:
+            pass
+
+    if not site_key:
+        print("[CAPTCHA] ❌ Turnstile site_key not found")
+        return None
+
+    print(f"[CAPTCHA] 🔄 Solving Cloudflare Turnstile...")
+
+    task = {{
+        'type': 'AntiTurnstileTaskProxyLess',
+        'websiteURL': url,
+        'websiteKey': site_key
+    }}
+
+    task_id = _capsolver_create_task(task)
+    if not task_id:
+        return None
+
+    solution = _capsolver_get_result(task_id, timeout)
+    if solution:
+        token = solution.get('token')
+        if token:
+            try:
+                page.evaluate(f'''(token) => {{{{
+                    const input = document.querySelector('[name="cf-turnstile-response"]');
+                    if (input) input.value = token;
+                }}}}''', token)
+                print(f"[CAPTCHA] ✅ Turnstile solved!")
+            except:
+                pass
+            return token
+
+    return None
+
+def solve_image_captcha(image_base64: str, module: str = 'common') -> str:
+    '''
+    Решить картинку с текстом
+
+    Args:
+        image_base64: Base64-encoded изображение
+        module: Модуль распознавания ('common', 'queueit', etc.)
+
+    Returns:
+        Распознанный текст или None
+    '''
+    print(f"[CAPTCHA] 🔄 Solving image captcha...")
+
+    task = {{
+        'type': 'ImageToTextTask',
+        'body': image_base64,
+        'module': module
+    }}
+
+    task_id = _capsolver_create_task(task)
+    if not task_id:
+        return None
+
+    solution = _capsolver_get_result(task_id, 60)
+    if solution:
+        text = solution.get('text')
+        if text:
+            print(f"[CAPTCHA] ✅ Image solved: {{text}}")
+            return text
+
+    return None
+
+def has_captcha(page) -> str:
+    '''
+    Проверить наличие капчи на странице
+
+    Returns:
+        Тип капчи ('recaptcha_v2', 'hcaptcha', 'turnstile') или None
+    '''
+    try:
+        html = page.content()
+
+        if 'g-recaptcha' in html or 'grecaptcha' in html:
+            return 'recaptcha_v2'
+        if 'h-captcha' in html or 'hcaptcha' in html:
+            return 'hcaptcha'
+        if 'cf-turnstile' in html or 'turnstile' in html:
+            return 'turnstile'
+    except:
+        pass
+
+    return None
+
+def solve_captcha(page, captcha_type: str = 'auto', timeout: int = CAPSOLVER_TIMEOUT) -> str:
+    '''
+    Универсальная функция решения капчи
+
+    Args:
+        page: Playwright page object
+        captcha_type: 'auto', 'recaptcha_v2', 'recaptcha_v3', 'hcaptcha', 'turnstile'
+        timeout: Таймаут решения
+
+    Returns:
+        Токен решения или None
+    '''
+    if captcha_type == 'auto':
+        captcha_type = has_captcha(page)
+        if not captcha_type:
+            print("[CAPTCHA] ℹ️ No captcha detected on page")
+            return None
+
+    print(f"[CAPTCHA] 🔓 Detected: {{captcha_type}}")
+
+    if captcha_type == 'recaptcha_v2':
+        return solve_recaptcha_v2(page, timeout=timeout)
+    elif captcha_type == 'recaptcha_v3':
+        return solve_recaptcha_v3(page, timeout=timeout)
+    elif captcha_type == 'hcaptcha':
+        return solve_hcaptcha(page, timeout=timeout)
+    elif captcha_type == 'turnstile':
+        return solve_turnstile(page, timeout=timeout)
+
+    return None
+
+"""
 
     def _generate_local_chromium_worker_function(self) -> str:
         """Генерирует worker функцию для Local Chromium режима"""
