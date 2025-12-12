@@ -3128,6 +3128,9 @@ def get_proxy_for_playwright(thread_id: int, iteration_number: int) -> Optional[
     """
     Получить настройки прокси для Playwright в формате:
     {'server': 'http://host:port', 'username': 'login', 'password': 'pass'}
+
+    ВАЖНО: Chromium НЕ поддерживает SOCKS5 с авторизацией!
+    Для SOCKS5 с auth используйте HTTP прокси или whitelist по IP.
     """
     proxy_dict = get_proxy_for_thread(thread_id, iteration_number)
 
@@ -3143,6 +3146,18 @@ def get_proxy_for_playwright(thread_id: int, iteration_number: int) -> Optional[
 
     if not host or not port:
         return None
+
+    # 🔥 ВАЖНО: Chromium не поддерживает SOCKS5 с авторизацией!
+    if proxy_type == 'socks5' and login and password:
+        print(f"[PROXY] [WARNING] ⚠️ SOCKS5 с авторизацией НЕ поддерживается Chromium!")
+        print(f"[PROXY] [WARNING] Варианты:")
+        print(f"[PROXY] [WARNING]   1. Используйте HTTP/HTTPS прокси с авторизацией")
+        print(f"[PROXY] [WARNING]   2. Используйте SOCKS5 без авторизации (whitelist по IP)")
+        print(f"[PROXY] [WARNING]   3. Используйте локальный proxy-chain туннель")
+        print(f"[PROXY] [INFO] Пробуем подключиться БЕЗ авторизации...")
+        # Пробуем без авторизации (вдруг whitelist настроен)
+        login = ''
+        password = ''
 
     playwright_proxy = {
         'server': f'{proxy_type}://{host}:{port}'
