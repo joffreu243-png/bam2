@@ -300,6 +300,9 @@ class BrowserAutomatorApp:
         self.threads_container = None
         self.stats_labels = {}
 
+        # Script runner
+        self.current_runner = None
+
         # Load config
         self.load_config()
 
@@ -432,6 +435,14 @@ class BrowserAutomatorApp:
         """Build the main launch tab"""
         # Top control panel
         with ui.row().classes('w-full items-center gap-4 hitech-card').style('padding: 16px 20px; margin-bottom: 16px;'):
+            # Browser mode selector
+            with ui.row().classes('items-center gap-2'):
+                ui.label('BROWSER:').style('color: #8888a0; font-size: 12px;')
+                self.browser_mode_select = ui.select(
+                    options=['Local Chromium', 'Octobrowser API'],
+                    value='Local Chromium'
+                ).classes('hitech-select').style('width: 160px;')
+
             # Thread count
             with ui.row().classes('items-center gap-2'):
                 ui.label('THREADS:').style('color: #8888a0; font-size: 12px;')
@@ -441,13 +452,18 @@ class BrowserAutomatorApp:
             with ui.row().classes('items-center gap-2'):
                 ui.label('PROVIDER:').style('color: #8888a0; font-size: 12px;')
                 providers = self.discover_providers()
-                self.provider_select = ui.select(options=providers, value=providers[0] if providers else 'default').classes('hitech-select').style('width: 180px;')
+                default_provider = 'smart_dynamic' if 'smart_dynamic' in providers else (providers[0] if providers else 'default')
+                self.provider_select = ui.select(options=providers, value=default_provider).classes('hitech-select').style('width: 180px;')
+
+            # Headless checkbox
+            self.headless_checkbox = ui.checkbox('Headless', value=False).style('color: #e0e0e5;')
 
             ui.space()
 
             # Action buttons
             ui.button('🚀 RUN', on_click=self.run_script).classes('hitech-btn-primary').style('height: 40px; padding: 0 24px; font-weight: 600;')
-            ui.button('⏹ TEST (1)', on_click=lambda: self.run_script(test=True)).classes('hitech-btn').style('height: 40px; padding: 0 20px;')
+            ui.button('⏹ STOP', on_click=self.stop_all).classes('hitech-btn-danger').style('height: 40px; padding: 0 20px;')
+            ui.button('🧪 TEST (1)', on_click=lambda: self.run_script(test=True)).classes('hitech-btn').style('height: 40px; padding: 0 20px;')
 
         # Main content - two columns
         with ui.row().classes('w-full gap-4').style('flex: 1; min-height: 0;'):
@@ -946,22 +962,103 @@ class BrowserAutomatorApp:
 
     def run_script(self, test: bool = False):
         """Run the automation script"""
-        threads = 1 if test else int(self.threads_input.value or 1)
+        import importlib
+        import tempfile
+        import threading
 
-        # Add threads
-        for i in range(threads):
+        threads_count = 1 if test else int(self.threads_input.value or 1)
+        provider_name = self.provider_select.value
+        browser_mode = self.browser_mode_select.value
+        headless = self.headless_checkbox.value
+        user_code = self.code_editor.value
+
+        if not user_code.strip():
+            ui.notify('Please enter automation code first', type='warning')
+            return
+
+        self.add_log(f'[System] Browser mode: {browser_mode}')
+        self.add_log(f'[System] Provider: {provider_name}')
+        self.add_log(f'[System] Threads: {threads_count}')
+        self.add_log(f'[System] Headless: {headless}')
+
+        try:
+            # Import provider's generator and runner
+            generator_module = importlib.import_module(f'src.providers.{provider_name}.generator')
+            runner_module = importlib.import_module(f'src.providers.{provider_name}.runner')
+
+            generator = generator_module.Generator()
+            self.current_runner = runner_module.Runner()
+
+            # Build config for generator
+            gen_config = {
+                'api_token': self.config.get('octobrowser', {}).get('api_token', ''),
+                'threads_count': threads_count,
+                'headless': headless,
+                'browser_mode': browser_mode,
+                'proxy': self.config.get('proxy', {}),
+                'proxy_list': self.config.get('proxy_list', {}),
+                'profile': {
+                    'tags': self.config.get('octo_defaults', {}).get('tags', []),
+                    'notes': self.config.get('octo_defaults', {}).get('notes', ''),
+                },
+                'fingerprint': self.config.get('fingerprint', {}),
+                'humanize': self.config.get('humanize', {}),
+                'simulate_typing': self.config.get('humanize', {}).get('mouse_movement', True),
+                'typing_delay': self.config.get('humanize', {}).get('typing_delay_min', 50),
+                'action_delay': self.config.get('humanize', {}).get('click_delay', 500) / 1000,
+            }
+
+            # Generate script
+            self.add_log('[System] Generating script...')
+            generated_script = generator.generate_script(user_code, gen_config)
+
+            # Save to temp file
+            script_dir = Path(__file__).parent.parent.parent / 'generated_scripts'
+            script_dir.mkdir(exist_ok=True)
+            script_path = script_dir / f'script_{datetime.now().strftime("%Y%m%d_%H%M%S")}.py'
+
+            with open(script_path, 'w', encoding='utf-8') as f:
+                f.write(generated_script)
+
+            self.add_log(f'[System] Script saved: {script_path.name}')
+
+            # Update generated script tab
+            if hasattr(self, 'generated_script_area'):
+                self.generated_script_area.set_value(generated_script)
+
+            # Add thread to tracking
             thread_id = str(len(self.threads_data) + 1)
-            self.threads_data[thread_id] = {'status': 'running', 'progress': 0.3, 'logs': []}
+            self.threads_data[thread_id] = {'status': 'running', 'progress': 0.1, 'logs': []}
+            self._update_threads_display()
 
-        self._update_threads_display()
+            # Set output callback
+            def on_output(line):
+                self.add_log(line)
+                # Update progress
+                if thread_id in self.threads_data:
+                    current = self.threads_data[thread_id]['progress']
+                    self.threads_data[thread_id]['progress'] = min(current + 0.05, 0.95)
+                    self._update_threads_display()
 
-        self.add_log(f'[System] Starting {threads} thread(s)...', 'info')
-        ui.notify(f'Started {threads} thread(s)', type='positive')
+            self.current_runner.set_output_callback(on_output)
 
-        # TODO: Actual script execution
+            # Run script
+            self.add_log('[System] Starting script execution...')
+            self.current_runner.run(str(script_path))
+
+            ui.notify(f'Script started ({threads_count} thread(s))', type='positive')
+
+        except Exception as e:
+            self.add_log(f'[ERROR] {e}', 'error')
+            ui.notify(f'Error: {e}', type='negative')
+            import traceback
+            traceback.print_exc()
 
     def stop_all(self):
         """Stop all running threads"""
+        if hasattr(self, 'current_runner') and self.current_runner:
+            self.current_runner.stop()
+
         for thread_id in self.threads_data:
             self.threads_data[thread_id]['status'] = 'completed'
         self._update_threads_display()
