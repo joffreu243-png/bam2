@@ -882,9 +882,10 @@ page.goto("https://example.com")
             self.stats_labels['indicator'].style(f'color: {color};')
 
     def _create_thread_card(self, thread_id: str, data: dict):
-        """Create a thread card in the sidebar"""
+        """Create a thread card in the sidebar with expandable logs"""
         status = data.get('status', 'pending')
         progress = data.get('progress', 0)
+        logs = data.get('logs', [])
 
         status_colors = {
             'pending': '#8888a0',
@@ -894,15 +895,56 @@ page.goto("https://example.com")
         }
         color = status_colors.get(status, '#8888a0')
 
-        with ui.column().classes('thread-card w-full'):
-            with ui.row().classes('w-full items-center gap-3'):
-                ui.label('●').style(f'color: {color}; font-size: 12px;')
-                with ui.column().classes('flex-grow gap-0'):
-                    ui.label(f'Thread #{thread_id}').style('color: #e0e0e5; font-size: 12px; font-weight: 600;')
-                    ui.label(status.upper()).style(f'color: {color}; font-size: 10px;')
+        with ui.expansion(
+            f'Thread #{thread_id}',
+            icon='radio_button_checked',
+            value=False
+        ).classes('thread-card w-full').style(f'''
+            --q-color-primary: {color};
+            background: rgba(20, 20, 35, 0.6);
+            border: 1px solid rgba(0, 212, 255, 0.1);
+            margin-bottom: 8px;
+        ''') as expansion:
+            # Header info
+            with ui.row().classes('w-full items-center justify-between').style('padding: 0 8px;'):
+                ui.label(status.upper()).style(f'color: {color}; font-size: 10px; font-weight: 600;')
+                if logs:
+                    ui.label(f'{len(logs)} logs').style('color: #666; font-size: 10px;')
 
+            # Progress bar for running threads
             if status == 'running':
-                ui.linear_progress(value=progress).classes('hitech-progress w-full').style('margin-top: 8px;')
+                ui.linear_progress(value=progress).classes('hitech-progress w-full').style('margin: 8px 0;')
+
+            # Logs section
+            if logs:
+                with ui.column().classes('w-full').style('''
+                    max-height: 200px;
+                    overflow-y: auto;
+                    background: rgba(0, 0, 0, 0.3);
+                    border-radius: 4px;
+                    padding: 8px;
+                    margin-top: 8px;
+                '''):
+                    for log_line in logs[-20:]:  # Show last 20 logs
+                        # Color based on log type
+                        log_color = '#e0e0e5'
+                        if '[ERROR]' in log_line:
+                            log_color = '#ff4466'
+                        elif '[OK]' in log_line:
+                            log_color = '#00ff88'
+                        elif '[WARN]' in log_line:
+                            log_color = '#ffaa00'
+
+                        ui.label(log_line).style(f'''
+                            color: {log_color};
+                            font-size: 10px;
+                            font-family: monospace;
+                            white-space: pre-wrap;
+                            word-break: break-all;
+                            line-height: 1.4;
+                        ''')
+            else:
+                ui.label('No logs yet...').style('color: #666; font-size: 11px; font-style: italic; padding: 8px;')
 
     # ========== Action Methods ==========
 
@@ -1042,18 +1084,48 @@ page.goto("https://example.com")
             if hasattr(self, 'generated_script_area'):
                 self.generated_script_area.set_value(generated_script)
 
-            # Add thread to tracking
-            thread_id = str(len(self.threads_data) + 1)
-            self.threads_data[thread_id] = {'status': 'running', 'progress': 0.1, 'logs': []}
+            # Add thread to tracking - initialize based on threads_count
+            for t_id in range(1, threads_count + 1):
+                self.threads_data[str(t_id)] = {'status': 'pending', 'progress': 0, 'logs': []}
             self._update_threads_display()
 
-            # Set output callback
+            # Set output callback - парсим логи по потокам
             def on_output(line):
+                import re
                 self.add_log(line)
-                # Update progress
-                if thread_id in self.threads_data:
-                    current = self.threads_data[thread_id]['progress']
-                    self.threads_data[thread_id]['progress'] = min(current + 0.05, 0.95)
+
+                # Парсим thread_id из лога: [THREAD X] или # THREAD X
+                thread_match = re.search(r'\[THREAD\s+(\d+)\]|# THREAD\s+(\d+)', line)
+                if thread_match:
+                    parsed_id = thread_match.group(1) or thread_match.group(2)
+                    if parsed_id in self.threads_data:
+                        self.threads_data[parsed_id]['logs'].append(line)
+                        self.threads_data[parsed_id]['status'] = 'running'
+
+                        # Update progress based on keywords
+                        if '[OK]' in line:
+                            self.threads_data[parsed_id]['progress'] = min(
+                                self.threads_data[parsed_id]['progress'] + 0.15, 0.95
+                            )
+                        elif '[ERROR]' in line:
+                            self.threads_data[parsed_id]['status'] = 'error'
+
+                        self._update_threads_display()
+
+                # Check for iteration completion
+                if 'ITERATION' in line and '[OK]' in line:
+                    iter_match = re.search(r'\[ITERATION\s+(\d+)\]', line)
+                    if iter_match:
+                        # Mark corresponding thread as completed
+                        for tid, tdata in self.threads_data.items():
+                            if tdata['status'] == 'running':
+                                tdata['progress'] = 1.0
+                elif '[MAIN] ЗАВЕРШЕНО' in line:
+                    # All done
+                    for tid in self.threads_data:
+                        if self.threads_data[tid]['status'] != 'error':
+                            self.threads_data[tid]['status'] = 'completed'
+                            self.threads_data[tid]['progress'] = 1.0
                     self._update_threads_display()
 
             self.current_runner.set_output_callback(on_output)
