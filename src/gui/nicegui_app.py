@@ -288,7 +288,7 @@ class BrowserAutomatorApp:
         self.data_parser = SmartDataParser()
 
         # State
-        self.threads_data: Dict[str, dict] = {}
+        self.iterations_data: Dict[str, dict] = {}  # Iteration ID -> {status, progress, logs}
         self.running_process = None
         self.current_provider = 'smart_wf'
         self.csv_data_rows = []
@@ -374,7 +374,7 @@ class BrowserAutomatorApp:
                 # Threads count
                 with ui.row().classes('items-center gap-2').style('background: #1a1a25; padding: 8px 16px; border: 1px solid #2a2a3a;'):
                     self.stats_labels['indicator'] = ui.label('●').style('color: #666;')
-                    self.stats_labels['threads'] = ui.label('THREADS: 0').style('color: #e0e0e5; font-size: 12px;')
+                    self.stats_labels['iterations'] = ui.label('ITERATIONS: 0').style('color: #e0e0e5; font-size: 12px;')
 
                 # Active count
                 with ui.row().classes('items-center gap-2').style('background: #1a1a25; padding: 8px 16px; border: 1px solid #2a2a3a;'):
@@ -388,17 +388,17 @@ class BrowserAutomatorApp:
             ui.button('◐', on_click=lambda: ui.notify('Theme toggle')).classes('hitech-btn').style('width: 40px; height: 40px;')
 
     def _build_sidebar(self):
-        """Build the left sidebar with threads"""
+        """Build the left sidebar with iterations"""
         with ui.column().classes('hitech-sidebar').style('width: 280px; height: 100%; padding: 0;'):
             # Header
             with ui.row().classes('w-full items-center justify-between panel-header'):
-                ui.label('THREADS').style('color: #e0e0e5; font-weight: 600; letter-spacing: 1px;')
-                ui.button('CLEAR', on_click=self.clear_threads).classes('hitech-btn-danger').style('font-size: 10px; padding: 4px 12px;')
+                ui.label('ITERATIONS').style('color: #e0e0e5; font-weight: 600; letter-spacing: 1px;')
+                ui.button('CLEAR', on_click=self.clear_iterations).classes('hitech-btn-danger').style('font-size: 10px; padding: 4px 12px;')
 
-            # Threads list
+            # Iterations list
             with ui.scroll_area().classes('flex-grow').style('padding: 12px;'):
-                self.threads_container = ui.column().classes('w-full gap-2')
-                self._update_threads_display()
+                self.iterations_container = ui.column().classes('w-full gap-2')
+                self._update_iterations_display()
 
             # Stop all button
             with ui.column().classes('w-full').style('padding: 12px; border-top: 1px solid #2a2a3a;'):
@@ -412,6 +412,7 @@ class BrowserAutomatorApp:
                 launch_tab = ui.tab('🚀 LAUNCH')
                 script_tab = ui.tab('📝 SCRIPT')
                 data_tab = ui.tab('📊 DATA')
+                proxy_tab = ui.tab('🌐 PROXY')
                 settings_tab = ui.tab('⚙️ SETTINGS')
                 logs_tab = ui.tab('📋 LOGS')
 
@@ -424,6 +425,9 @@ class BrowserAutomatorApp:
 
                 with ui.tab_panel(data_tab).style('padding: 20px;'):
                     self._build_data_tab()
+
+                with ui.tab_panel(proxy_tab).style('padding: 20px;'):
+                    self._build_proxy_tab()
 
                 with ui.tab_panel(settings_tab).style('padding: 20px;'):
                     self._build_settings_tab()
@@ -512,23 +516,6 @@ page.goto("https://example.com")
 
                     ui.separator().style('background: #2a2a3a;')
 
-                    # Proxy settings
-                    with ui.column().classes('w-full gap-2'):
-                        with ui.row().classes('items-center gap-2'):
-                            ui.label('🌐').style('font-size: 18px;')
-                            ui.label('PROXY SETTINGS').style('color: #00d4ff; font-weight: 600; letter-spacing: 1px;')
-
-                        with ui.row().classes('w-full gap-2'):
-                            ui.checkbox('Enable Proxy').style('color: #e0e0e5;')
-
-                        self.proxy_input = ui.input(
-                            placeholder='host:port:user:pass'
-                        ).classes('hitech-input w-full').style('font-size: 12px;')
-
-                        ui.button('📂 Load Proxy List', on_click=self.load_proxy_list).classes('hitech-btn w-full').style('font-size: 11px;')
-
-                    ui.separator().style('background: #2a2a3a;')
-
                     # Timing settings
                     with ui.column().classes('w-full gap-2'):
                         with ui.row().classes('items-center gap-2'):
@@ -592,6 +579,225 @@ page.goto("https://example.com")
                 ui.label('No data loaded').style('color: #8888a0;')
                 ui.label('Import CSV/Excel or generate fake data').style('color: #666; font-size: 12px;')
 
+    def _build_proxy_tab(self):
+        """Build the proxy settings tab"""
+        with ui.scroll_area().classes('w-full h-full'):
+            with ui.column().classes('w-full gap-6').style('padding: 20px; max-width: 1200px;'):
+
+                # === PROXY MODE SELECTOR ===
+                with ui.column().classes('hitech-card w-full gap-4').style('padding: 20px;'):
+                    ui.label('🌐 PROXY MODE').style('color: #00d4ff; font-weight: 600; letter-spacing: 1px;')
+
+                    with ui.row().classes('w-full gap-4'):
+                        self.proxy_mode_select = ui.select(
+                            options=['Disabled', 'Single Proxy', 'Proxy List', '9Proxy API'],
+                            value=self._get_current_proxy_mode()
+                        ).classes('hitech-select').style('width: 200px;')
+                        ui.label('Select how proxies will be used').style('color: #8888a0; font-size: 12px; margin-left: 12px;')
+
+                # === SINGLE PROXY ===
+                with ui.column().classes('hitech-card w-full gap-4').style('padding: 20px;'):
+                    ui.label('📍 SINGLE PROXY').style('color: #00ff88; font-weight: 600; letter-spacing: 1px;')
+                    ui.label('Configure a single proxy for all threads').style('color: #8888a0; font-size: 12px;')
+
+                    with ui.row().classes('w-full gap-4 items-center'):
+                        self.proxy_enabled_checkbox = ui.checkbox(
+                            'Enable',
+                            value=self.config.get('proxy', {}).get('enabled', False)
+                        ).style('color: #e0e0e5;')
+
+                        with ui.column().classes('w-32 gap-1'):
+                            ui.label('Type').style('color: #8888a0; font-size: 11px;')
+                            self.proxy_type_select = ui.select(
+                                options=['http', 'https', 'socks5'],
+                                value=self.config.get('proxy', {}).get('type', 'http')
+                            ).classes('hitech-select w-full')
+
+                    with ui.row().classes('w-full gap-4'):
+                        with ui.column().classes('flex-1 gap-1'):
+                            ui.label('Host').style('color: #8888a0; font-size: 11px;')
+                            self.proxy_host_input = ui.input(
+                                value=self.config.get('proxy', {}).get('host', ''),
+                                placeholder='proxy.example.com'
+                            ).classes('hitech-input w-full')
+                        with ui.column().classes('w-24 gap-1'):
+                            ui.label('Port').style('color: #8888a0; font-size: 11px;')
+                            self.proxy_port_input = ui.input(
+                                value=self.config.get('proxy', {}).get('port', ''),
+                                placeholder='8080'
+                            ).classes('hitech-input w-full')
+                        with ui.column().classes('flex-1 gap-1'):
+                            ui.label('Login').style('color: #8888a0; font-size: 11px;')
+                            self.proxy_login_input = ui.input(
+                                value=self.config.get('proxy', {}).get('login', ''),
+                                placeholder='username'
+                            ).classes('hitech-input w-full')
+                        with ui.column().classes('flex-1 gap-1'):
+                            ui.label('Password').style('color: #8888a0; font-size: 11px;')
+                            self.proxy_password_input = ui.input(
+                                value=self.config.get('proxy', {}).get('password', ''),
+                                password=True,
+                                placeholder='password'
+                            ).classes('hitech-input w-full')
+
+                # === PROXY LIST ===
+                with ui.column().classes('hitech-card w-full gap-4').style('padding: 20px;'):
+                    with ui.row().classes('w-full items-center justify-between'):
+                        ui.label('📋 PROXY LIST').style('color: #ffcc00; font-weight: 600; letter-spacing: 1px;')
+                        ui.button('📂 Load from File', on_click=self.load_proxy_list).classes('hitech-btn').style('font-size: 11px;')
+
+                    ui.label('One proxy per line: type://host:port:user:pass or host:port:user:pass').style('color: #8888a0; font-size: 12px;')
+
+                    self.proxy_list_input = ui.textarea(
+                        value='\n'.join(self.config.get('proxy_list', {}).get('proxies', [])),
+                        placeholder='socks5://127.0.0.1:6000\nhttp://proxy.example.com:8080:user:pass\n192.168.1.1:3128:admin:secret'
+                    ).classes('hitech-code w-full').style('height: 200px; font-family: monospace;')
+
+                    with ui.row().classes('w-full gap-4 items-center'):
+                        with ui.column().classes('gap-1'):
+                            ui.label('Rotation Mode').style('color: #8888a0; font-size: 11px;')
+                            self.proxy_rotation_select = ui.select(
+                                options=['sequential', 'random', 'round-robin'],
+                                value=self.config.get('proxy_list', {}).get('rotation_mode', 'sequential')
+                            ).classes('hitech-select').style('width: 150px;')
+
+                        self.proxy_retry_checkbox = ui.checkbox(
+                            'Retry on Failure',
+                            value=self.config.get('proxy_list', {}).get('retry_on_failure', True)
+                        ).style('color: #e0e0e5;')
+
+                        ui.space()
+                        with ui.row().classes('items-center gap-2').style('background: #1a1a25; padding: 8px 16px; border: 1px solid #2a2a3a;'):
+                            ui.label('Loaded:').style('color: #8888a0; font-size: 11px;')
+                            self.proxy_count_label = ui.label('0 proxies').style('color: #00ff88; font-size: 12px; font-weight: 600;')
+
+                # === 9PROXY API ===
+                with ui.column().classes('hitech-card w-full gap-4').style('padding: 20px;'):
+                    ui.label('🔥 9PROXY API').style('color: #ff6600; font-weight: 600; letter-spacing: 1px;')
+                    ui.label('Dynamic residential proxy rotation via 9Proxy API').style('color: #8888a0; font-size: 12px;')
+
+                    with ui.row().classes('w-full gap-4 items-center'):
+                        self.nine_proxy_enabled = ui.checkbox(
+                            'Enable 9Proxy',
+                            value=self.config.get('nine_proxy', {}).get('enabled', False)
+                        ).style('color: #e0e0e5;')
+
+                        with ui.column().classes('flex-1 gap-1'):
+                            ui.label('API URL').style('color: #8888a0; font-size: 11px;')
+                            self.nine_proxy_url = ui.input(
+                                value=self.config.get('nine_proxy', {}).get('api_url', 'http://localhost:50000'),
+                                placeholder='http://localhost:50000'
+                            ).classes('hitech-input w-full')
+
+                    with ui.row().classes('w-full gap-4'):
+                        with ui.column().classes('flex-1 gap-1'):
+                            ui.label('Ports (comma separated)').style('color: #8888a0; font-size: 11px;')
+                            self.nine_proxy_ports = ui.input(
+                                value=','.join(map(str, self.config.get('nine_proxy', {}).get('ports', [6001, 6002, 6003]))),
+                                placeholder='6001,6002,6003'
+                            ).classes('hitech-input w-full')
+
+                        with ui.column().classes('w-40 gap-1'):
+                            ui.label('Strategy').style('color: #8888a0; font-size: 11px;')
+                            self.nine_proxy_strategy = ui.select(
+                                options=['sequential', 'random'],
+                                value=self.config.get('nine_proxy', {}).get('strategy', 'sequential')
+                            ).classes('hitech-select w-full')
+
+                        self.nine_proxy_auto_rotate = ui.checkbox(
+                            'Auto Rotate',
+                            value=self.config.get('nine_proxy', {}).get('auto_rotate', True)
+                        ).style('color: #e0e0e5;')
+
+                    # 9Proxy Filters
+                    with ui.expansion('🎯 Geo Filters', icon='filter_alt').classes('w-full').style('background: rgba(255,102,0,0.1); border: 1px solid rgba(255,102,0,0.2);'):
+                        with ui.row().classes('w-full gap-4'):
+                            with ui.column().classes('flex-1 gap-1'):
+                                ui.label('Country').style('color: #8888a0; font-size: 11px;')
+                                self.nine_proxy_country = ui.input(
+                                    value=self.config.get('nine_proxy', {}).get('filters', {}).get('country', ''),
+                                    placeholder='US, DE, FR...'
+                                ).classes('hitech-input w-full')
+                            with ui.column().classes('flex-1 gap-1'):
+                                ui.label('State').style('color: #8888a0; font-size: 11px;')
+                                self.nine_proxy_state = ui.input(
+                                    value=self.config.get('nine_proxy', {}).get('filters', {}).get('state', ''),
+                                    placeholder='California, Texas...'
+                                ).classes('hitech-input w-full')
+                            with ui.column().classes('flex-1 gap-1'):
+                                ui.label('City').style('color: #8888a0; font-size: 11px;')
+                                self.nine_proxy_city = ui.input(
+                                    value=self.config.get('nine_proxy', {}).get('filters', {}).get('city', ''),
+                                    placeholder='New York, Los Angeles...'
+                                ).classes('hitech-input w-full')
+                            with ui.column().classes('flex-1 gap-1'):
+                                ui.label('ISP').style('color: #8888a0; font-size: 11px;')
+                                self.nine_proxy_isp = ui.input(
+                                    value=self.config.get('nine_proxy', {}).get('filters', {}).get('isp', ''),
+                                    placeholder='Comcast, Verizon...'
+                                ).classes('hitech-input w-full')
+
+                # Save button
+                with ui.row().classes('w-full justify-end'):
+                    ui.button('💾 SAVE PROXY SETTINGS', on_click=self.save_proxy_settings).classes('hitech-btn-primary').style('padding: 12px 32px; font-weight: 600;')
+
+    def _get_current_proxy_mode(self):
+        """Determine current proxy mode from config"""
+        if self.config.get('nine_proxy', {}).get('enabled', False):
+            return '9Proxy API'
+        elif self.config.get('proxy_list', {}).get('proxies', []):
+            return 'Proxy List'
+        elif self.config.get('proxy', {}).get('enabled', False):
+            return 'Single Proxy'
+        return 'Disabled'
+
+    def save_proxy_settings(self):
+        """Save proxy settings"""
+        try:
+            # Single Proxy
+            self.config.setdefault('proxy', {})
+            self.config['proxy']['enabled'] = self.proxy_enabled_checkbox.value
+            self.config['proxy']['type'] = self.proxy_type_select.value
+            self.config['proxy']['host'] = self.proxy_host_input.value
+            self.config['proxy']['port'] = self.proxy_port_input.value
+            self.config['proxy']['login'] = self.proxy_login_input.value
+            self.config['proxy']['password'] = self.proxy_password_input.value
+
+            # Proxy List
+            self.config.setdefault('proxy_list', {})
+            proxy_lines = [line.strip() for line in self.proxy_list_input.value.split('\n') if line.strip()]
+            self.config['proxy_list']['proxies'] = proxy_lines
+            self.config['proxy_list']['rotation_mode'] = self.proxy_rotation_select.value
+            self.config['proxy_list']['retry_on_failure'] = self.proxy_retry_checkbox.value
+
+            # 9Proxy
+            self.config.setdefault('nine_proxy', {})
+            self.config['nine_proxy']['enabled'] = self.nine_proxy_enabled.value
+            self.config['nine_proxy']['api_url'] = self.nine_proxy_url.value
+            ports_str = self.nine_proxy_ports.value
+            self.config['nine_proxy']['ports'] = [int(p.strip()) for p in ports_str.split(',') if p.strip().isdigit()]
+            self.config['nine_proxy']['strategy'] = self.nine_proxy_strategy.value
+            self.config['nine_proxy']['auto_rotate'] = self.nine_proxy_auto_rotate.value
+
+            self.config['nine_proxy'].setdefault('filters', {})
+            self.config['nine_proxy']['filters']['country'] = self.nine_proxy_country.value
+            self.config['nine_proxy']['filters']['state'] = self.nine_proxy_state.value
+            self.config['nine_proxy']['filters']['city'] = self.nine_proxy_city.value
+            self.config['nine_proxy']['filters']['isp'] = self.nine_proxy_isp.value
+
+            # Save to file
+            with open(self.config_path, 'w', encoding='utf-8') as f:
+                json.dump(self.config, f, indent=2, ensure_ascii=False)
+
+            # Update proxy count label
+            if hasattr(self, 'proxy_count_label'):
+                count = len(proxy_lines)
+                self.proxy_count_label.set_text(f'{count} proxies')
+
+            ui.notify('Proxy settings saved', type='positive')
+        except Exception as e:
+            ui.notify(f'Error saving: {e}', type='negative')
+
     def _build_settings_tab(self):
         """Build the settings tab"""
         with ui.scroll_area().classes('w-full h-full'):
@@ -643,67 +849,6 @@ page.goto("https://example.com")
                                 value=self.config.get('sms', {}).get('service', 'ds'),
                                 placeholder='Service code (ds, go, etc.)'
                             ).classes('hitech-input w-full')
-
-                # === PROXY SETTINGS ===
-                with ui.column().classes('hitech-card w-full gap-4').style('padding: 20px;'):
-                    ui.label('🌐 PROXY SETTINGS').style('color: #00ff88; font-weight: 600; letter-spacing: 1px;')
-
-                    with ui.row().classes('w-full gap-4 items-center'):
-                        self.proxy_enabled_checkbox = ui.checkbox(
-                            'Enable Proxy',
-                            value=self.config.get('proxy', {}).get('enabled', False)
-                        ).style('color: #e0e0e5;')
-
-                        with ui.column().classes('flex-1 gap-2'):
-                            ui.label('Proxy Type').style('color: #8888a0; font-size: 12px;')
-                            self.proxy_type_select = ui.select(
-                                options=['http', 'https', 'socks5'],
-                                value=self.config.get('proxy', {}).get('type', 'http')
-                            ).classes('hitech-select w-full')
-
-                    with ui.row().classes('w-full gap-4'):
-                        with ui.column().classes('flex-1 gap-2'):
-                            ui.label('Host').style('color: #8888a0; font-size: 12px;')
-                            self.proxy_host_input = ui.input(
-                                value=self.config.get('proxy', {}).get('host', ''),
-                                placeholder='proxy.example.com'
-                            ).classes('hitech-input w-full')
-                        with ui.column().classes('w-24 gap-2'):
-                            ui.label('Port').style('color: #8888a0; font-size: 12px;')
-                            self.proxy_port_input = ui.input(
-                                value=self.config.get('proxy', {}).get('port', ''),
-                                placeholder='8080'
-                            ).classes('hitech-input w-full')
-                        with ui.column().classes('flex-1 gap-2'):
-                            ui.label('Login').style('color: #8888a0; font-size: 12px;')
-                            self.proxy_login_input = ui.input(
-                                value=self.config.get('proxy', {}).get('login', ''),
-                                placeholder='username'
-                            ).classes('hitech-input w-full')
-                        with ui.column().classes('flex-1 gap-2'):
-                            ui.label('Password').style('color: #8888a0; font-size: 12px;')
-                            self.proxy_password_input = ui.input(
-                                value=self.config.get('proxy', {}).get('password', ''),
-                                password=True,
-                                placeholder='password'
-                            ).classes('hitech-input w-full')
-
-                    ui.label('Proxy List (one per line: host:port:user:pass)').style('color: #8888a0; font-size: 12px;')
-                    self.proxy_list_input = ui.textarea(
-                        value='\n'.join(self.config.get('proxy_list', {}).get('proxies', [])),
-                        placeholder='proxy1:8080:user:pass\nproxy2:8080:user:pass'
-                    ).classes('hitech-code w-full').style('height: 100px;')
-
-                    with ui.row().classes('w-full gap-4 items-center'):
-                        ui.label('Rotation Mode:').style('color: #8888a0; font-size: 12px;')
-                        self.proxy_rotation_select = ui.select(
-                            options=['sequential', 'random'],
-                            value=self.config.get('proxy_list', {}).get('rotation_mode', 'sequential')
-                        ).classes('hitech-select')
-                        self.proxy_retry_checkbox = ui.checkbox(
-                            'Retry on Failure',
-                            value=self.config.get('proxy_list', {}).get('retry_on_failure', True)
-                        ).style('color: #e0e0e5;')
 
                 # === HUMANIZE SETTINGS ===
                 with ui.column().classes('hitech-card w-full gap-4').style('padding: 20px;'):
@@ -851,41 +996,42 @@ page.goto("https://example.com")
                 placeholder='Logs will appear here...'
             ).classes('log-viewer w-full flex-grow').style('min-height: 500px; resize: none;')
 
-    def _update_threads_display(self):
-        """Update the threads display in sidebar"""
-        if not self.threads_container:
+    def _update_iterations_display(self):
+        """Update the iterations display in sidebar"""
+        if not self.iterations_container:
             return
 
-        self.threads_container.clear()
+        self.iterations_container.clear()
 
-        with self.threads_container:
-            if not self.threads_data:
+        with self.iterations_container:
+            if not self.iterations_data:
                 # Empty state
                 with ui.column().classes('w-full items-center').style('padding: 40px 20px;'):
                     ui.label('🚀').style('font-size: 48px; opacity: 0.5;')
-                    ui.label('No active threads').style('color: #8888a0; font-weight: 600;')
-                    ui.label('Configure and run from LAUNCH tab').style('color: #666; font-size: 11px; text-align: center;')
+                    ui.label('No iterations').style('color: #8888a0; font-weight: 600;')
+                    ui.label('Run script to see iterations').style('color: #666; font-size: 11px; text-align: center;')
             else:
-                for thread_id, data in self.threads_data.items():
-                    self._create_thread_card(thread_id, data)
+                for iter_id, data in self.iterations_data.items():
+                    self._create_iteration_card(iter_id, data)
 
         # Update stats
-        total = len(self.threads_data)
-        active = sum(1 for t in self.threads_data.values() if t.get('status') == 'running')
+        total = len(self.iterations_data)
+        active = sum(1 for t in self.iterations_data.values() if t.get('status') == 'running')
 
-        if 'threads' in self.stats_labels:
-            self.stats_labels['threads'].set_text(f'THREADS: {total}')
+        if 'iterations' in self.stats_labels:
+            self.stats_labels['iterations'].set_text(f'ITERATIONS: {total}')
         if 'active' in self.stats_labels:
             self.stats_labels['active'].set_text(f'ACTIVE: {active}')
         if 'indicator' in self.stats_labels:
             color = '#00ff88' if active > 0 else '#666'
             self.stats_labels['indicator'].style(f'color: {color};')
 
-    def _create_thread_card(self, thread_id: str, data: dict):
-        """Create a thread card in the sidebar with expandable logs"""
+    def _create_iteration_card(self, iter_id: str, data: dict):
+        """Create an iteration card in the sidebar - click to show full logs"""
         status = data.get('status', 'pending')
         progress = data.get('progress', 0)
         logs = data.get('logs', [])
+        csv_row = data.get('csv_row', iter_id)
 
         status_colors = {
             'pending': '#8888a0',
@@ -895,38 +1041,73 @@ page.goto("https://example.com")
         }
         color = status_colors.get(status, '#8888a0')
 
-        with ui.expansion(
-            f'Thread #{thread_id}',
-            icon='radio_button_checked',
-            value=False
-        ).classes('thread-card w-full').style(f'''
-            --q-color-primary: {color};
+        # Card that opens full log dialog on click
+        with ui.card().classes('iteration-card w-full cursor-pointer').style(f'''
             background: rgba(20, 20, 35, 0.6);
-            border: 1px solid rgba(0, 212, 255, 0.1);
+            border: 1px solid {color}40;
+            border-left: 3px solid {color};
             margin-bottom: 8px;
-        ''') as expansion:
-            # Header info
-            with ui.row().classes('w-full items-center justify-between').style('padding: 0 8px;'):
-                ui.label(status.upper()).style(f'color: {color}; font-size: 10px; font-weight: 600;')
-                if logs:
-                    ui.label(f'{len(logs)} logs').style('color: #666; font-size: 10px;')
+            padding: 12px;
+            transition: all 0.2s;
+        ''').on('click', lambda e, lid=iter_id, ldata=data: self._show_iteration_logs(lid, ldata)):
+            with ui.row().classes('w-full items-center justify-between'):
+                with ui.column().classes('gap-0'):
+                    ui.label(f'Iteration #{iter_id}').style('color: #e0e0e5; font-size: 13px; font-weight: 600;')
+                    ui.label(f'CSV Row: {csv_row}').style('color: #8888a0; font-size: 10px;')
 
-            # Progress bar for running threads
+                with ui.column().classes('items-end gap-0'):
+                    ui.label(status.upper()).style(f'color: {color}; font-size: 11px; font-weight: 600;')
+                    if logs:
+                        ui.label(f'{len(logs)} logs').style('color: #666; font-size: 10px;')
+
+            # Progress bar for running iterations
             if status == 'running':
-                ui.linear_progress(value=progress).classes('hitech-progress w-full').style('margin: 8px 0;')
+                ui.linear_progress(value=progress).classes('hitech-progress w-full').style('margin-top: 8px;')
 
-            # Logs section
-            if logs:
-                with ui.column().classes('w-full').style('''
-                    max-height: 200px;
-                    overflow-y: auto;
-                    background: rgba(0, 0, 0, 0.3);
-                    border-radius: 4px;
-                    padding: 8px;
-                    margin-top: 8px;
-                '''):
-                    for log_line in logs[-20:]:  # Show last 20 logs
-                        # Color based on log type
+    def _show_iteration_logs(self, iter_id: str, data: dict):
+        """Show full logs for an iteration in a dialog"""
+        logs = data.get('logs', [])
+        status = data.get('status', 'pending')
+        csv_row = data.get('csv_row', iter_id)
+
+        status_colors = {
+            'pending': '#8888a0',
+            'running': '#00ff88',
+            'completed': '#00d4ff',
+            'error': '#ff4466'
+        }
+        color = status_colors.get(status, '#8888a0')
+
+        with ui.dialog() as dialog, ui.card().classes('w-full').style('''
+            background: #0a0a0f;
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            max-width: 900px;
+            max-height: 80vh;
+        '''):
+            # Header
+            with ui.row().classes('w-full items-center justify-between').style('''
+                padding: 16px 20px;
+                border-bottom: 1px solid #2a2a3a;
+                background: #12121a;
+            '''):
+                with ui.row().classes('items-center gap-3'):
+                    ui.label(f'📋 Iteration #{iter_id}').style('color: #e0e0e5; font-size: 16px; font-weight: 600;')
+                    ui.label(f'CSV Row: {csv_row}').style('color: #8888a0; font-size: 12px;')
+                    ui.label(status.upper()).style(f'''
+                        color: {color};
+                        font-size: 11px;
+                        font-weight: 600;
+                        padding: 4px 12px;
+                        background: {color}20;
+                        border: 1px solid {color}40;
+                    ''')
+
+                ui.button('✕', on_click=dialog.close).classes('hitech-btn').style('padding: 8px 12px;')
+
+            # Logs content
+            with ui.scroll_area().classes('w-full').style('height: 500px; padding: 16px;'):
+                if logs:
+                    for log_line in logs:
                         log_color = '#e0e0e5'
                         if '[ERROR]' in log_line:
                             log_color = '#ff4466'
@@ -934,17 +1115,22 @@ page.goto("https://example.com")
                             log_color = '#00ff88'
                         elif '[WARN]' in log_line:
                             log_color = '#ffaa00'
+                        elif '[THREAD' in log_line or '###' in log_line:
+                            log_color = '#00d4ff'
 
                         ui.label(log_line).style(f'''
                             color: {log_color};
-                            font-size: 10px;
+                            font-size: 12px;
                             font-family: monospace;
                             white-space: pre-wrap;
                             word-break: break-all;
-                            line-height: 1.4;
+                            line-height: 1.6;
+                            padding: 2px 0;
                         ''')
-            else:
-                ui.label('No logs yet...').style('color: #666; font-size: 11px; font-style: italic; padding: 8px;')
+                else:
+                    ui.label('No logs available').style('color: #666; font-style: italic;')
+
+        dialog.open()
 
     # ========== Action Methods ==========
 
@@ -962,21 +1148,7 @@ page.goto("https://example.com")
             self.config['sms']['api_key'] = self.sms_api_key_input.value
             self.config['sms']['service'] = self.sms_service_input.value
 
-            # Proxy Settings
-            self.config.setdefault('proxy', {})
-            self.config['proxy']['enabled'] = self.proxy_enabled_checkbox.value
-            self.config['proxy']['type'] = self.proxy_type_select.value
-            self.config['proxy']['host'] = self.proxy_host_input.value
-            self.config['proxy']['port'] = self.proxy_port_input.value
-            self.config['proxy']['login'] = self.proxy_login_input.value
-            self.config['proxy']['password'] = self.proxy_password_input.value
-
-            # Proxy List
-            self.config.setdefault('proxy_list', {})
-            proxy_lines = [line.strip() for line in self.proxy_list_input.value.split('\n') if line.strip()]
-            self.config['proxy_list']['proxies'] = proxy_lines
-            self.config['proxy_list']['rotation_mode'] = self.proxy_rotation_select.value
-            self.config['proxy_list']['retry_on_failure'] = self.proxy_retry_checkbox.value
+            # Note: Proxy settings are saved via save_proxy_settings() in PROXY tab
 
             # Humanize Settings
             self.config.setdefault('humanize', {})
@@ -1084,49 +1256,68 @@ page.goto("https://example.com")
             if hasattr(self, 'generated_script_area'):
                 self.generated_script_area.set_value(generated_script)
 
-            # Add thread to tracking - initialize based on threads_count
-            for t_id in range(1, threads_count + 1):
-                self.threads_data[str(t_id)] = {'status': 'pending', 'progress': 0, 'logs': []}
-            self._update_threads_display()
+            # Initialize iterations tracking (will be populated as iterations start)
+            self.iterations_data.clear()
+            self._update_iterations_display()
+            self._current_iteration_id = None
 
-            # Set output callback - парсим логи по потокам
+            # Set output callback - parse logs by iteration
             def on_output(line):
                 import re
                 self.add_log(line)
 
-                # Парсим thread_id из лога: [THREAD X] или # THREAD X
-                thread_match = re.search(r'\[THREAD\s+(\d+)\]|# THREAD\s+(\d+)', line)
-                if thread_match:
-                    parsed_id = thread_match.group(1) or thread_match.group(2)
-                    if parsed_id in self.threads_data:
-                        self.threads_data[parsed_id]['logs'].append(line)
-                        self.threads_data[parsed_id]['status'] = 'running'
+                # Parse ITERATION from log: ITERATION X or [ITERATION X]
+                iter_match = re.search(r'ITERATION\s+(\d+)', line)
+                if iter_match:
+                    iter_id = iter_match.group(1)
 
-                        # Update progress based on keywords
-                        if '[OK]' in line:
-                            self.threads_data[parsed_id]['progress'] = min(
-                                self.threads_data[parsed_id]['progress'] + 0.15, 0.95
-                            )
-                        elif '[ERROR]' in line:
-                            self.threads_data[parsed_id]['status'] = 'error'
+                    # Create iteration entry if not exists
+                    if iter_id not in self.iterations_data:
+                        # Parse CSV row from header: CSV ROW X
+                        csv_match = re.search(r'CSV ROW\s+(\d+)', line)
+                        csv_row = csv_match.group(1) if csv_match else iter_id
+                        self.iterations_data[iter_id] = {
+                            'status': 'running',
+                            'progress': 0.1,
+                            'logs': [],
+                            'csv_row': csv_row
+                        }
 
-                        self._update_threads_display()
+                    self.iterations_data[iter_id]['logs'].append(line)
+                    self._current_iteration_id = iter_id
+
+                    # Update status based on keywords
+                    if '[OK]' in line:
+                        self.iterations_data[iter_id]['progress'] = min(
+                            self.iterations_data[iter_id]['progress'] + 0.2, 0.95
+                        )
+                    elif '[ERROR]' in line or '[FAIL]' in line:
+                        self.iterations_data[iter_id]['status'] = 'error'
+
+                    self._update_iterations_display()
+
+                # Also add THREAD logs to current iteration
+                elif self._current_iteration_id and self._current_iteration_id in self.iterations_data:
+                    if '[THREAD' in line or '[PROXY' in line or '[MARK' in line:
+                        self.iterations_data[self._current_iteration_id]['logs'].append(line)
 
                 # Check for iteration completion
-                if 'ITERATION' in line and '[OK]' in line:
+                if '[ITERATION' in line and ('[OK]' in line or 'успешно' in line.lower()):
                     iter_match = re.search(r'\[ITERATION\s+(\d+)\]', line)
                     if iter_match:
-                        # Mark corresponding thread as completed
-                        for tid, tdata in self.threads_data.items():
-                            if tdata['status'] == 'running':
-                                tdata['progress'] = 1.0
+                        iter_id = iter_match.group(1)
+                        if iter_id in self.iterations_data:
+                            self.iterations_data[iter_id]['status'] = 'completed'
+                            self.iterations_data[iter_id]['progress'] = 1.0
+                            self._update_iterations_display()
+
                 elif '[MAIN] ЗАВЕРШЕНО' in line:
-                    # All done
-                    for tid in self.threads_data:
-                        if self.threads_data[tid]['status'] != 'error':
-                            self.threads_data[tid]['status'] = 'completed'
-                            self.threads_data[tid]['progress'] = 1.0
-                    self._update_threads_display()
+                    # All done - mark remaining as completed
+                    for iid in self.iterations_data:
+                        if self.iterations_data[iid]['status'] == 'running':
+                            self.iterations_data[iid]['status'] = 'completed'
+                            self.iterations_data[iid]['progress'] = 1.0
+                    self._update_iterations_display()
 
             self.current_runner.set_output_callback(on_output)
 
@@ -1143,21 +1334,22 @@ page.goto("https://example.com")
             traceback.print_exc()
 
     def stop_all(self):
-        """Stop all running threads"""
+        """Stop all running iterations"""
         if hasattr(self, 'current_runner') and self.current_runner:
             self.current_runner.stop()
 
-        for thread_id in self.threads_data:
-            self.threads_data[thread_id]['status'] = 'completed'
-        self._update_threads_display()
-        self.add_log('[System] All threads stopped', 'warning')
-        ui.notify('All threads stopped', type='warning')
+        for iter_id in self.iterations_data:
+            if self.iterations_data[iter_id]['status'] == 'running':
+                self.iterations_data[iter_id]['status'] = 'error'
+        self._update_iterations_display()
+        self.add_log('[System] Execution stopped', 'warning')
+        ui.notify('Execution stopped', type='warning')
 
-    def clear_threads(self):
-        """Clear all threads"""
-        self.threads_data.clear()
-        self._update_threads_display()
-        ui.notify('Threads cleared', type='info')
+    def clear_iterations(self):
+        """Clear all iterations"""
+        self.iterations_data.clear()
+        self._update_iterations_display()
+        ui.notify('Iterations cleared', type='info')
 
     def add_log(self, message: str, level: str = 'info'):
         """Add a log entry"""
