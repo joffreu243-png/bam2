@@ -1251,6 +1251,7 @@ page.goto("https://example.com")
             self.current_runner = runner_module.Runner()
 
             # Build config for generator
+            nine_proxy_config = self.config.get('nine_proxy', {})
             gen_config = {
                 'api_token': self.config.get('octobrowser', {}).get('api_token', ''),
                 'threads_count': threads_count,
@@ -1258,6 +1259,13 @@ page.goto("https://example.com")
                 'browser_mode': browser_mode,
                 'proxy': self.config.get('proxy', {}),
                 'proxy_list': self.config.get('proxy_list', {}),
+                # 9Proxy settings
+                'nine_proxy_enabled': nine_proxy_config.get('enabled', False),
+                'nine_proxy_api_url': nine_proxy_config.get('api_url', 'http://localhost:50000'),
+                'nine_proxy_ports': nine_proxy_config.get('ports', []),
+                'nine_proxy_strategy': nine_proxy_config.get('strategy', 'sequential'),
+                'nine_proxy_auto_rotate': nine_proxy_config.get('auto_rotate', True),
+                'nine_proxy': nine_proxy_config,  # Full config for filters
                 'profile': {
                     'tags': self.config.get('octo_defaults', {}).get('tags', []),
                     'notes': self.config.get('octo_defaults', {}).get('notes', ''),
@@ -1268,6 +1276,12 @@ page.goto("https://example.com")
                 'typing_delay': self.config.get('humanize', {}).get('typing_delay_min', 50),
                 'action_delay': self.config.get('humanize', {}).get('click_delay', 500) / 1000,
             }
+
+            # Log proxy mode
+            proxy_mode = self.config.get('proxy_mode', 'Disabled')
+            self.add_log(f'[System] Proxy mode: {proxy_mode}')
+            if proxy_mode == '9Proxy API':
+                self.add_log(f'[System] 9Proxy ports: {nine_proxy_config.get("ports", [])}')
 
             # Generate script
             self.add_log('[System] Generating script...')
