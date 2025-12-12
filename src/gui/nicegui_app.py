@@ -450,9 +450,9 @@ class BrowserAutomatorApp:
             ui.button('⏹ TEST (1)', on_click=lambda: self.run_script(test=True)).classes('hitech-btn').style('height: 40px; padding: 0 20px;')
 
         # Main content - two columns
-        with ui.row().classes('w-full gap-4').style('height: calc(100% - 90px);'):
+        with ui.row().classes('w-full gap-4').style('flex: 1; min-height: 0;'):
             # Left: Code editor
-            with ui.column().classes('hitech-card').style('flex: 6; height: 100%; padding: 0;'):
+            with ui.column().classes('hitech-card').style('flex: 6; min-height: 0; padding: 0; display: flex; flex-direction: column;'):
                 # Code header
                 with ui.row().classes('w-full items-center justify-between panel-header'):
                     ui.label('📝 AUTOMATION CODE').style('color: #e0e0e5; font-weight: 600;')
@@ -461,11 +461,11 @@ class BrowserAutomatorApp:
                         ui.button('📋 Paste', on_click=self.paste_clipboard).classes('hitech-btn').style('font-size: 11px;')
                         ui.button('✨ Generate', on_click=self.generate_script).classes('hitech-btn-primary').style('font-size: 11px;')
 
-                # Code editor
+                # Code editor - fills remaining space
                 self.code_editor = ui.textarea(
                     value='# Your Playwright automation code here\n\nasync def main(page, data):\n    await page.goto("https://example.com")\n    # Your code...\n',
                     placeholder='Enter your automation code here...'
-                ).classes('hitech-code w-full flex-grow').style('min-height: 400px; resize: none;')
+                ).classes('hitech-code w-full').style('flex: 1; min-height: 500px; resize: vertical;')
 
             # Right: Settings panel
             with ui.scroll_area().classes('hitech-card').style('flex: 4; height: 100%; padding: 0;'):
