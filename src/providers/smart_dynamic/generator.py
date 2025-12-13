@@ -44,6 +44,13 @@ class Generator:
         """
         api_token = config.get('api_token', '')
 
+        # 🔥 Browser Mode: 'local_chromium' или 'octobrowser_api'
+        self.browser_mode = config.get('browser_mode', 'octobrowser_api')
+        self.headless = config.get('headless', False)
+
+        print(f"[GENERATOR] Browser Mode: {self.browser_mode}")
+        print(f"[GENERATOR] Headless: {self.headless}")
+
         # 🔥 Защита от передачи строк вместо словарей
         proxy_config = config.get('proxy', {})
         if not isinstance(proxy_config, dict):
@@ -89,6 +96,22 @@ class Generator:
         print(f"[GENERATOR DEBUG]   - nine_proxy_state: {nine_proxy_state}")
         print(f"[GENERATOR DEBUG]   - nine_proxy_city: {nine_proxy_city}")
 
+        # 🔥 Antidetect настройки
+        self.antidetect_enabled = config.get('antidetect_enabled', False)
+        self.antidetect_country = config.get('antidetect_country', 'auto')  # 'auto' = определять по прокси
+        print(f"[GENERATOR DEBUG] Antidetect: enabled={self.antidetect_enabled}, country={self.antidetect_country}")
+
+        # 🔓 Captcha/Anti-captcha настройки (CapSolver)
+        captcha_config = config.get('captcha', {})
+        self.captcha_enabled = captcha_config.get('enabled', False)
+        self.captcha_api_key = captcha_config.get('api_key', '')
+        self.captcha_timeout = captcha_config.get('timeout', 120)
+        self.captcha_min_score = captcha_config.get('min_score', 0.7)
+        self.captcha_auto_detect = captcha_config.get('auto_detect', True)
+        self.captcha_use_proxy = captcha_config.get('use_proxy', False)
+        self.captcha_click_checkbox = captcha_config.get('click_checkbox', True)
+        print(f"[GENERATOR DEBUG] Captcha: enabled={self.captcha_enabled}, auto_detect={self.captcha_auto_detect}, click_checkbox={self.captcha_click_checkbox}")
+
         # Симуляция ввода текста
         self.simulate_typing = config.get('simulate_typing', True)
         self.typing_delay = config.get('typing_delay', 100)
@@ -106,14 +129,34 @@ class Generator:
                                         disposable_profiles)
         script += self._generate_proxy_rotation()
         script += self._generate_nine_proxy_rotation()  # 🔥 9Proxy функция ротации
-        script += self._generate_octobrowser_functions(profile_config)
+
+        # 🔥 Условная генерация: Octobrowser API или Local Chromium
+        if self.browser_mode == 'local_chromium':
+            script += self._generate_local_chromium_functions()
+            # 🔥 Antidetect fingerprints для Local Chromium
+            if self.antidetect_enabled:
+                script += self._generate_antidetect_fingerprints()
+        else:
+            script += self._generate_octobrowser_functions(profile_config)
+
         script += self._generate_helpers()
+
+        # 🔓 Captcha solving функции (CapSolver)
+        if self.captcha_enabled:
+            script += self._generate_captcha_functions()
+
         script += self._generate_csv_loader()
         script += self._generate_questions_pool(questions_pool)  # 🔥 СЛОВАРЬ ВОПРОСОВ
         script += self._generate_answer_question_function()  # 🔥 ФУНКЦИЯ ПОИСКА И ОТВЕТА
         script += self._generate_main_iteration(pre_questions_code, post_questions_code, network_capture_patterns)
-        script += self._generate_worker_function()
-        script += self._generate_main_function()
+
+        # 🔥 Worker функция зависит от режима браузера
+        if self.browser_mode == 'local_chromium':
+            script += self._generate_local_chromium_worker_function()
+            script += self._generate_local_chromium_main_function()
+        else:
+            script += self._generate_worker_function()
+            script += self._generate_main_function()
 
         return script
 
@@ -463,7 +506,15 @@ from typing import Dict, List, Optional
 # КОНФИГУРАЦИЯ
 # ============================================================
 
-# Octobrowser API
+# 🔥 Browser Mode: 'local_chromium' или 'octobrowser_api'
+BROWSER_MODE = "{self.browser_mode}"
+HEADLESS = {self.headless}
+
+'''
+
+        # Octobrowser API конфиг только для octobrowser режима
+        if self.browser_mode != 'local_chromium':
+            config += f'''# Octobrowser API
 API_BASE_URL = "https://app.octobrowser.net/api/v2/automation"
 API_TOKEN = "{api_token}"
 LOCAL_API_URL = "http://localhost:58888/api"
@@ -493,6 +544,7 @@ _next_port_index = 0  # Счетчик для назначения портов
         # Прокси конфигурация
         proxies_list = proxy_list_config.get('proxies', [])
         rotation_mode = proxy_list_config.get('rotation_mode', 'random')
+        default_type = proxy_list_config.get('default_type', 'socks5')  # socks5 по умолчанию
         use_proxy_list = len(proxies_list) > 0
 
         if use_proxy_list:
@@ -500,6 +552,7 @@ _next_port_index = 0  # Счетчик для назначения портов
 USE_PROXY_LIST = True
 PROXY_LIST = {json.dumps(proxies_list, ensure_ascii=False, indent=2)}
 PROXY_ROTATION_MODE = "{rotation_mode}"
+PROXY_DEFAULT_TYPE = "{default_type}"  # Тип для прокси без type:// префикса
 
 '''
         else:
@@ -507,6 +560,7 @@ PROXY_ROTATION_MODE = "{rotation_mode}"
             config += f'''# Прокси (одиночный)
 USE_PROXY_LIST = False
 USE_PROXY = {proxy_enabled}
+PROXY_DEFAULT_TYPE = "socks5"  # Тип по умолчанию
 '''
 
             if proxy_enabled:
@@ -740,7 +794,10 @@ def initialize_nine_proxy_ports() -> bool:
 # ============================================================
 
 def parse_proxy_string(proxy_string: str) -> Optional[Dict]:
-    """Парсинг прокси строки"""
+    """
+    Парсинг прокси строки
+    Если type:// не указан, используется PROXY_DEFAULT_TYPE (по умолчанию socks5)
+    """
     try:
         proxy_string = proxy_string.strip()
 
@@ -766,11 +823,23 @@ def parse_proxy_string(proxy_string: str) -> Optional[Dict]:
                 'password': ''
             }
 
+        # type://host:port:login:password
+        match = re.match(r'^(https?|socks5)://([^:]+):(\\d+):([^:]+):([^:]+)$', proxy_string)
+        if match:
+            return {
+                'type': match.group(1),
+                'host': match.group(2),
+                'port': match.group(3),
+                'login': match.group(4),
+                'password': match.group(5)
+            }
+
+        # 🔥 БЕЗ type:// - используем PROXY_DEFAULT_TYPE
         # host:port:login:password
         match = re.match(r'^([^:]+):(\\d+):([^:]+):([^:]+)$', proxy_string)
         if match:
             return {
-                'type': 'http',
+                'type': PROXY_DEFAULT_TYPE,  # socks5 по умолчанию
                 'host': match.group(1),
                 'port': match.group(2),
                 'login': match.group(3),
@@ -781,7 +850,7 @@ def parse_proxy_string(proxy_string: str) -> Optional[Dict]:
         match = re.match(r'^([^:]+):(\\d+)$', proxy_string)
         if match:
             return {
-                'type': 'http',
+                'type': PROXY_DEFAULT_TYPE,  # socks5 по умолчанию
                 'host': match.group(1),
                 'port': match.group(2),
                 'login': '',
@@ -2118,8 +2187,8 @@ def answer_questions(page, data_row: Dict, max_questions: int = 100):
         # Единый return code (всегда возвращаем extracted_fields, даже если они пустые)
         network_return_code = '''
         # Ожидание финальных validate запросов (они приходят асинхронно после последних действий)
-        print("[NETWORK_CAPTURE] Ожидание финальных validate запросов (20 сек)...", flush=True)
-        page2.wait_for_timeout(20000)
+        print("[NETWORK_CAPTURE] Ожидание финальных validate запросов (5 сек)...", flush=True)
+        page.wait_for_timeout(5000)
 
         # 🌐 Вывод захваченных данных (если есть)
         print(f"\\n[NETWORK_CAPTURE] === ИТОГОВЫЕ ДАННЫЕ ===")
@@ -2193,6 +2262,13 @@ def run_iteration(page, data_row: Dict, iteration_number: int):
         """
         if not code or not code.strip():
             return "        # Нет дополнительных действий"
+
+        # 🔧 Удаляем 'await' - Playwright в sync режиме не использует await
+        import re
+        code = re.sub(r'\bawait\s+', '', code)
+
+        # 🔧 Удаляем точки с запятой в конце строк (JavaScript синтаксис)
+        code = re.sub(r';\s*$', '', code, flags=re.MULTILINE)
 
         lines = code.split('\n')
         cleaned = []
@@ -3069,4 +3145,1226 @@ if __name__ == "__main__":
     main()
 '''
 
+    # ============================================================
+    # 🔥 LOCAL CHROMIUM MODE - Чистый Playwright без Octobrowser API
+    # ============================================================
+
+    def _generate_local_chromium_functions(self) -> str:
+        """Генерирует заглушки для Local Chromium режима (не нужны Octobrowser функции)"""
+        return '''# ============================================================
+# LOCAL CHROMIUM MODE - Функции браузера
+# ============================================================
+
+import subprocess
+import socket
+import atexit
+
+# Глобальное хранилище туннелей
+_proxy_tunnels = {}
+
+def _find_free_port(start_port: int = 10800) -> int:
+    """Найти свободный порт."""
+    port = start_port
+    while port < 65535:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(('127.0.0.1', port))
+                return port
+            except OSError:
+                port += 1
+    raise RuntimeError("No free ports available")
+
+def create_socks5_tunnel(proxy_type: str, host: str, port: str, login: str, password: str) -> tuple:
+    """
+    Создать локальный HTTP туннель для SOCKS5 с авторизацией.
+    Использует встроенный Python скрипт (без внешних зависимостей).
+
+    Returns:
+        (local_port, process) или (None, None) если не удалось
+    """
+    global _proxy_tunnels
+    import sys
+    import tempfile
+    import os
+
+    try:
+        local_port = _find_free_port(10800 + len(_proxy_tunnels))
+
+        print(f"[PROXY TUNNEL] 🔧 Creating tunnel localhost:{local_port} -> {proxy_type}://{host}:{port}")
+        print(f"[PROXY TUNNEL] Auth: {login[:25]}...:{password[:5]}...")
+
+        # Экранируем кавычки в логине/пароле
+        login_escaped = login.replace('\\\\', '\\\\\\\\').replace('"', '\\\\"')
+        password_escaped = password.replace('\\\\', '\\\\\\\\').replace('"', '\\\\"')
+
+        # Создаём Python скрипт для туннеля
+        tunnel_script = f"""# -*- coding: utf-8 -*-
+import socket
+import threading
+import struct
+import sys
+
+SOCKS5_HOST = "{host}"
+SOCKS5_PORT = {port}
+SOCKS5_USER = "{login_escaped}"
+SOCKS5_PASS = "{password_escaped}"
+LOCAL_PORT = {local_port}
+
+def socks5_connect(target_host, target_port):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(30)
+    sock.connect((SOCKS5_HOST, SOCKS5_PORT))
+    # Auth methods: 0x00=no auth, 0x02=user/pass
+    sock.send(b"\\\\x05\\\\x02\\\\x00\\\\x02")
+    resp = sock.recv(2)
+    if len(resp) < 2:
+        raise Exception("SOCKS5 no response")
+    if resp[1] == 2:
+        auth = bytes([1, len(SOCKS5_USER)]) + SOCKS5_USER.encode() + bytes([len(SOCKS5_PASS)]) + SOCKS5_PASS.encode()
+        sock.send(auth)
+        auth_resp = sock.recv(2)
+        if len(auth_resp) < 2 or auth_resp[1] != 0:
+            raise Exception("SOCKS5 auth failed")
+    elif resp[1] != 0:
+        raise Exception(f"SOCKS5 method error")
+    # Connect
+    req = b"\\\\x05\\\\x01\\\\x00\\\\x03" + bytes([len(target_host)]) + target_host.encode() + struct.pack(">H", target_port)
+    sock.send(req)
+    resp = sock.recv(10)
+    if len(resp) < 2 or resp[1] != 0:
+        raise Exception("SOCKS5 connect failed")
+    return sock
+
+def forward(src, dst):
+    try:
+        while True:
+            data = src.recv(8192)
+            if not data:
+                break
+            dst.sendall(data)
+    except:
+        pass
+    try: src.close()
+    except: pass
+    try: dst.close()
+    except: pass
+
+def handle_client(client):
+    try:
+        req = client.recv(8192).decode("utf-8", errors="ignore")
+        if not req.startswith("CONNECT"):
+            client.send(b"HTTP/1.1 400 Bad Request\\\\r\\\\n\\\\r\\\\n")
+            client.close()
+            return
+        line = req.split("\\\\r\\\\n")[0]
+        target = line.split()[1]
+        h, p = target.rsplit(":", 1)
+        remote = socks5_connect(h, int(p))
+        client.send(b"HTTP/1.1 200 Connection Established\\\\r\\\\n\\\\r\\\\n")
+        t1 = threading.Thread(target=forward, args=(client, remote), daemon=True)
+        t2 = threading.Thread(target=forward, args=(remote, client), daemon=True)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+    except Exception as e:
+        print(f"[TUNNEL] {{e}}", file=sys.stderr)
+        try: client.close()
+        except: pass
+
+def main():
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", LOCAL_PORT))
+    srv.listen(50)
+    print(f"[TUNNEL] OK port {{LOCAL_PORT}}", file=sys.stderr)
+    while True:
+        c, a = srv.accept()
+        threading.Thread(target=handle_client, args=(c,), daemon=True).start()
+
+if __name__ == "__main__":
+    main()
+"""
+
+        # Сохраняем скрипт во временный файл
+        fd, script_path = tempfile.mkstemp(suffix='.py', prefix='socks_tunnel_')
+        os.write(fd, tunnel_script.encode('utf-8'))
+        os.close(fd)
+
+        # Запускаем скрипт
+        process = subprocess.Popen(
+            [sys.executable, script_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        # Даём время на запуск и проверяем вывод
+        time.sleep(0.5)
+
+        if process.poll() is not None:
+            stdout, stderr = process.communicate()
+            error_msg = stderr.decode() if stderr else 'Unknown error'
+            print(f"[PROXY TUNNEL] ❌ Failed: {error_msg}")
+            os.unlink(script_path)
+            return None, None
+
+        _proxy_tunnels[local_port] = {'process': process, 'script': script_path}
+        print(f"[PROXY TUNNEL] ✅ Tunnel ready on port {local_port}")
+
+        return local_port, process
+
+    except Exception as e:
+        print(f"[PROXY TUNNEL] ❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, None
+
+def close_tunnel(local_port: int):
+    """Закрыть туннель."""
+    global _proxy_tunnels
+    import os
+    if local_port in _proxy_tunnels:
+        tunnel_data = _proxy_tunnels[local_port]
+        process = tunnel_data.get('process') if isinstance(tunnel_data, dict) else tunnel_data
+        script_path = tunnel_data.get('script') if isinstance(tunnel_data, dict) else None
+
+        # Завершаем процесс
+        try:
+            process.terminate()
+            process.wait(timeout=2)
+        except:
+            try:
+                process.kill()
+            except:
+                pass
+
+        # Удаляем временный скрипт
+        if script_path:
+            try:
+                os.unlink(script_path)
+            except:
+                pass
+
+        del _proxy_tunnels[local_port]
+        print(f"[PROXY TUNNEL] Closed tunnel on port {local_port}")
+
+def close_all_tunnels():
+    """Закрыть все туннели."""
+    global _proxy_tunnels
+    for port in list(_proxy_tunnels.keys()):
+        close_tunnel(port)
+    print("[PROXY TUNNEL] All tunnels closed")
+
+# Регистрируем cleanup
+atexit.register(close_all_tunnels)
+
+def get_proxy_for_playwright(thread_id: int, iteration_number: int) -> Optional[Dict]:
+    """
+    Получить настройки прокси для Playwright в формате:
+    {'server': 'http://host:port', 'username': 'login', 'password': 'pass', 'tunnel_port': port}
+
+    Автоматически создаёт туннель для SOCKS5 с авторизацией!
+    """
+    proxy_dict = get_proxy_for_thread(thread_id, iteration_number)
+
+    if not proxy_dict:
+        return None
+
+    # Формируем прокси для Playwright
+    proxy_type = proxy_dict.get('type', 'http').lower()
+    host = proxy_dict.get('host', '')
+    port = proxy_dict.get('port', '')
+    login = proxy_dict.get('login', '')
+    password = proxy_dict.get('password', '')
+
+    if not host or not port:
+        return None
+
+    # 🔥 SOCKS5 с авторизацией - создаём туннель!
+    if proxy_type in ['socks5', 'socks4'] and login and password:
+        print(f"[PROXY] SOCKS5 с авторизацией - создаём туннель...")
+
+        tunnel_port, _ = create_socks5_tunnel(proxy_type, host, port, login, password)
+
+        if tunnel_port:
+            # Используем локальный HTTP туннель
+            return {
+                'server': f'http://127.0.0.1:{tunnel_port}',
+                'tunnel_port': tunnel_port  # Запоминаем для закрытия
+            }
+        else:
+            print(f"[PROXY] ⚠️ Tunnel failed, trying without auth...")
+            # Fallback - пробуем без авторизации
+            return {
+                'server': f'{proxy_type}://{host}:{port}'
+            }
+
+    # HTTP/HTTPS с авторизацией - работает напрямую
+    playwright_proxy = {
+        'server': f'{proxy_type}://{host}:{port}'
+    }
+
+    if login and password:
+        playwright_proxy['username'] = login
+        playwright_proxy['password'] = password
+
+    return playwright_proxy
+
+'''
+
+    def _generate_antidetect_fingerprints(self) -> str:
+        """Генерирует код для antidetect fingerprints"""
+        return '''# ============================================================
+# 🔥 ANTIDETECT FINGERPRINTS - Реалистичные отпечатки браузера
+# ============================================================
+
+import json
+import random
+import hashlib
+from pathlib import Path
+
+# Загружаем базы данных fingerprints
+FINGERPRINTS_BASE_PATH = Path(__file__).parent / 'src' / 'fingerprints'
+if not FINGERPRINTS_BASE_PATH.exists():
+    FINGERPRINTS_BASE_PATH = Path('src/fingerprints')
+
+def load_fingerprint_database():
+    """Загрузка базы fingerprints"""
+    try:
+        fp_path = FINGERPRINTS_BASE_PATH / 'fingerprints_database.json'
+        if fp_path.exists():
+            with open(fp_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except:
+        pass
+    return {'fingerprints': []}
+
+def load_geo_database():
+    """Загрузка гео базы"""
+    try:
+        geo_path = FINGERPRINTS_BASE_PATH / 'geo_database.json'
+        if geo_path.exists():
+            with open(geo_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except:
+        pass
+    return {}
+
+def load_stealth_script():
+    """Загрузка stealth скрипта"""
+    try:
+        script_path = FINGERPRINTS_BASE_PATH / 'stealth' / 'stealth_script.js'
+        if script_path.exists():
+            with open(script_path, 'r', encoding='utf-8') as f:
+                return f.read()
+    except:
+        pass
+    return ''
+
+# Загружаем при старте
+FINGERPRINTS_DB = load_fingerprint_database()
+GEO_DB = load_geo_database()
+STEALTH_SCRIPT_TEMPLATE = load_stealth_script()
+
+# Маппинг timezone -> offset в минутах
+TIMEZONE_OFFSETS = {
+    "America/New_York": -300, "America/Chicago": -360, "America/Denver": -420,
+    "America/Los_Angeles": -480, "America/Phoenix": -420,
+    "Europe/London": 0, "Europe/Paris": 60, "Europe/Berlin": 60,
+    "Europe/Moscow": 180, "Europe/Kiev": 120, "Europe/Warsaw": 60,
+    "Asia/Tokyo": 540, "Asia/Seoul": 540, "Asia/Shanghai": 480,
+    "Asia/Singapore": 480, "Asia/Bangkok": 420,
+    "Australia/Sydney": 660, "Australia/Melbourne": 660,
+    "America/Sao_Paulo": -180, "America/Mexico_City": -360,
+}
+
+def detect_country_from_proxy(proxy_string: str) -> str:
+    """Определение страны по IP прокси через GeoIP API"""
+    if not proxy_string:
+        return 'US'
+
+    import re
+    # Извлекаем IP
+    patterns = [
+        r'^(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}):\\d+',
+        r'@(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}):\\d+',
+        r'://(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}):\\d+',
+    ]
+
+    ip = None
+    for pattern in patterns:
+        match = re.search(pattern, proxy_string)
+        if match:
+            ip = match.group(1)
+            break
+
+    if not ip:
+        return 'US'
+
+    try:
+        import requests
+        response = requests.get(f'http://ip-api.com/json/{ip}?fields=countryCode', timeout=5)
+        if response.status_code == 200:
+            country = response.json().get('countryCode', 'US')
+            print(f"[ANTIDETECT] GeoIP: {ip} -> {country}")
+            return country
+    except Exception as e:
+        print(f"[ANTIDETECT] GeoIP error: {e}")
+
+    return 'US'
+
+def generate_fingerprint_for_country(country_code: str, proxy_string: str = None) -> dict:
+    """Генерация fingerprint привязанного к стране"""
+
+    # Получаем базовый fingerprint
+    fingerprints = FINGERPRINTS_DB.get('fingerprints', [])
+    base_fp = random.choice(fingerprints) if fingerprints else {
+        'userAgent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'platform': 'Win32',
+        'vendor': 'Google Inc.',
+        'screen': {'width': 1920, 'height': 1080, 'colorDepth': 24, 'pixelRatio': 1},
+        'webgl': {'vendor': 'Google Inc.', 'renderer': 'ANGLE'},
+        'hardwareConcurrency': 8,
+        'deviceMemory': 8,
+        'maxTouchPoints': 0,
+        'plugins': []
+    }
+
+    # Получаем данные страны
+    country = GEO_DB.get(country_code.upper(), GEO_DB.get('US', {}))
+    if not country:
+        country = {
+            'timezones': ['America/New_York'],
+            'languages': ['en-US', 'en'],
+            'accept_language': 'en-US,en;q=0.9',
+            'cities': [{'name': 'New York', 'lat': 40.7128, 'lng': -74.0060, 'timezone': 'America/New_York'}]
+        }
+
+    # Выбираем случайный город
+    cities = country.get('cities', [])
+    city = random.choice(cities) if cities else {'name': 'Unknown', 'lat': 0, 'lng': 0, 'timezone': country.get('timezones', ['UTC'])[0]}
+
+    # Timezone
+    timezone_name = city.get('timezone', country.get('timezones', ['UTC'])[0])
+    timezone_offset = TIMEZONE_OFFSETS.get(timezone_name, 0)
+
+    # Languages
+    languages = country.get('languages', ['en-US', 'en'])
+
+    # Seed для консистентности (одинаковый fingerprint для одного прокси)
+    if proxy_string:
+        seed = int(hashlib.md5(proxy_string.encode()).hexdigest()[:8], 16)
+        random.seed(seed)
+
+    fingerprint = {
+        'userAgent': base_fp.get('userAgent', ''),
+        'platform': base_fp.get('platform', 'Win32'),
+        'vendor': base_fp.get('vendor', 'Google Inc.'),
+        'screen': base_fp.get('screen', {'width': 1920, 'height': 1080, 'colorDepth': 24, 'pixelRatio': 1}),
+        'webgl': base_fp.get('webgl', {'vendor': 'Google Inc.', 'renderer': 'ANGLE'}),
+        'hardwareConcurrency': base_fp.get('hardwareConcurrency', 8),
+        'deviceMemory': base_fp.get('deviceMemory', 8),
+        'maxTouchPoints': base_fp.get('maxTouchPoints', 0),
+        'plugins': base_fp.get('plugins', []),
+        'languages': languages,
+        'acceptLanguage': country.get('accept_language', 'en-US,en;q=0.9'),
+        'timezone': timezone_name,
+        'timezoneOffset': timezone_offset,
+        'locale': country.get('locale', languages[0]),
+        'latitude': city.get('lat', 0),
+        'longitude': city.get('lng', 0),
+        'city': city.get('name', 'Unknown'),
+        'country': country_code.upper(),
+    }
+
+    random.seed()  # Сброс seed
+    return fingerprint
+
+def generate_stealth_script(fingerprint: dict) -> str:
+    """Генерация JavaScript для применения fingerprint"""
+    if not STEALTH_SCRIPT_TEMPLATE:
+        return ''
+
+    script = STEALTH_SCRIPT_TEMPLATE
+
+    replacements = {
+        '{{USER_AGENT}}': fingerprint.get('userAgent', ''),
+        '{{PLATFORM}}': fingerprint.get('platform', 'Win32'),
+        '{{VENDOR}}': fingerprint.get('vendor', 'Google Inc.'),
+        '{{LANGUAGES}}': json.dumps(fingerprint.get('languages', ['en-US'])),
+        '{{HARDWARE_CONCURRENCY}}': str(fingerprint.get('hardwareConcurrency', 8)),
+        '{{DEVICE_MEMORY}}': str(fingerprint.get('deviceMemory', 8)),
+        '{{MAX_TOUCH_POINTS}}': str(fingerprint.get('maxTouchPoints', 0)),
+        '{{SCREEN_WIDTH}}': str(fingerprint.get('screen', {}).get('width', 1920)),
+        '{{SCREEN_HEIGHT}}': str(fingerprint.get('screen', {}).get('height', 1080)),
+        '{{COLOR_DEPTH}}': str(fingerprint.get('screen', {}).get('colorDepth', 24)),
+        '{{PIXEL_RATIO}}': str(fingerprint.get('screen', {}).get('pixelRatio', 1)),
+        '{{TIMEZONE}}': fingerprint.get('timezone', 'America/New_York'),
+        '{{TIMEZONE_OFFSET}}': str(fingerprint.get('timezoneOffset', -300)),
+        '{{WEBGL_VENDOR}}': fingerprint.get('webgl', {}).get('vendor', 'Google Inc.'),
+        '{{WEBGL_RENDERER}}': fingerprint.get('webgl', {}).get('renderer', 'ANGLE'),
+        '{{PLUGINS}}': json.dumps(fingerprint.get('plugins', [])),
+        '{{LATITUDE}}': str(fingerprint.get('latitude', 0)),
+        '{{LONGITUDE}}': str(fingerprint.get('longitude', 0)),
+    }
+
+    for placeholder, value in replacements.items():
+        script = script.replace(placeholder, value)
+
+    return script
+
+def get_antidetect_context_options(fingerprint: dict) -> dict:
+    """Получение опций для Playwright context с fingerprint"""
+    screen = fingerprint.get('screen', {})
+    return {
+        'user_agent': fingerprint.get('userAgent', ''),
+        'viewport': {
+            'width': screen.get('width', 1920),
+            'height': screen.get('height', 1080) - 140
+        },
+        'screen': {
+            'width': screen.get('width', 1920),
+            'height': screen.get('height', 1080)
+        },
+        'device_scale_factor': screen.get('pixelRatio', 1),
+        'locale': fingerprint.get('locale', 'en-US'),
+        'timezone_id': fingerprint.get('timezone', 'America/New_York'),
+        'geolocation': {
+            'latitude': fingerprint.get('latitude', 40.7128),
+            'longitude': fingerprint.get('longitude', -74.0060)
+        },
+        'permissions': ['geolocation'],
+        'color_scheme': 'light',
+        'extra_http_headers': {
+            'Accept-Language': fingerprint.get('acceptLanguage', 'en-US,en;q=0.9')
+        }
+    }
+
+def get_antidetect_launch_args(fingerprint: dict) -> list:
+    """Аргументы запуска браузера для antidetect"""
+    screen = fingerprint.get('screen', {})
+    return [
+        '--disable-blink-features=AutomationControlled',
+        '--disable-infobars',
+        '--disable-dev-shm-usage',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-background-networking',
+        '--disable-sync',
+        '--disable-translate',
+        '--metrics-recording-only',
+        '--mute-audio',
+        f'--window-size={screen.get("width", 1920)},{screen.get("height", 1080)}',
+        f'--lang={fingerprint.get("languages", ["en-US"])[0]}',
+    ]
+
+def apply_stealth_to_page(page, fingerprint: dict):
+    """Применение stealth скрипта к странице"""
+    stealth_script = generate_stealth_script(fingerprint)
+    if stealth_script:
+        page.add_init_script(stealth_script)
+        print(f"[ANTIDETECT] ✅ Fingerprint applied: {fingerprint.get('country', 'US')} / {fingerprint.get('city', 'Unknown')} / {fingerprint.get('timezone', 'UTC')}")
+    else:
+        print("[ANTIDETECT] ⚠️ Stealth script not loaded, using basic settings")
+
+# Флаг antidetect режима
+ANTIDETECT_ENABLED = True
+ANTIDETECT_COUNTRY = "auto"  # 'auto' = определять по прокси, или код страны (US, RU, DE...)
+
+print("[ANTIDETECT] 🛡️ Antidetect mode ENABLED")
+'''
+
+    def _generate_captcha_functions(self) -> str:
+        """Генерирует код для решения капчи через CapSolver"""
+        api_key = self.captcha_api_key
+        timeout = self.captcha_timeout
+        min_score = self.captcha_min_score
+        use_proxy = self.captcha_use_proxy
+        click_checkbox = self.captcha_click_checkbox
+
+        return f"""# ============================================================
+# 🔓 CAPSOLVER ANTI-CAPTCHA - Автоматическое решение капчи
+# ============================================================
+
+import time
+import requests
+
+CAPSOLVER_API_KEY = "{api_key}"
+CAPSOLVER_TIMEOUT = {timeout}
+CAPSOLVER_MIN_SCORE = {min_score}
+CAPSOLVER_USE_PROXY = {use_proxy}
+CAPSOLVER_CLICK_CHECKBOX = {click_checkbox}
+
+print("[CAPTCHA] 🔓 CapSolver Anti-Captcha ENABLED")
+
+def _capsolver_create_task(task: dict) -> str:
+    '''Создать задачу в CapSolver и получить taskId'''
+    print(f"[CAPTCHA] 📤 Creating task: {{task.get('type')}}", flush=True)
+    try:
+        response = requests.post(
+            'https://api.capsolver.com/createTask',
+            json={{'clientKey': CAPSOLVER_API_KEY, 'task': task}},
+            timeout=30
+        )
+        data = response.json()
+        print(f"[CAPTCHA] API response: {{data}}", flush=True)
+        if data.get('errorId', 1) != 0:
+            raise Exception(data.get('errorDescription', 'Unknown error'))
+        task_id = data.get('taskId')
+        print(f"[CAPTCHA] ✅ Task created: {{task_id}}", flush=True)
+        return task_id
+    except Exception as e:
+        print(f"[CAPTCHA] ❌ createTask failed: {{e}}", flush=True)
+        return None
+
+def _capsolver_get_result(task_id: str, timeout: int = CAPSOLVER_TIMEOUT) -> dict:
+    '''Ожидать результат решения капчи'''
+    print(f"[CAPTCHA] ⏳ Waiting for result (timeout: {{timeout}}s)...", flush=True)
+    start = time.time()
+    poll_count = 0
+    while time.time() - start < timeout:
+        poll_count += 1
+        try:
+            response = requests.post(
+                'https://api.capsolver.com/getTaskResult',
+                json={{'clientKey': CAPSOLVER_API_KEY, 'taskId': task_id}},
+                timeout=30
+            )
+            data = response.json()
+            status = data.get('status')
+            elapsed = int(time.time() - start)
+            print(f"[CAPTCHA] Poll #{{poll_count}}: status={{status}} ({{elapsed}}s)", flush=True)
+            if status == 'ready':
+                print(f"[CAPTCHA] ✅ Solution received!", flush=True)
+                return data.get('solution', {{}})
+            elif status == 'failed':
+                raise Exception(data.get('errorDescription', 'Task failed'))
+            time.sleep(3)
+        except Exception as e:
+            print(f"[CAPTCHA] ⚠️ getTaskResult error: {{e}}", flush=True)
+            time.sleep(3)
+    print(f"[CAPTCHA] ❌ Timeout after {{timeout}}s", flush=True)
+    return None
+
+def solve_recaptcha_v2(page, site_key: str = None, timeout: int = CAPSOLVER_TIMEOUT) -> str:
+    '''
+    Решить reCAPTCHA v2 на странице
+
+    Args:
+        page: Playwright page object
+        site_key: Ключ сайта (если None - определяется автоматически)
+        timeout: Таймаут ожидания решения
+
+    Returns:
+        g-recaptcha-response токен или None
+    '''
+    print("[CAPTCHA] ▶️ solve_recaptcha_v2() called", flush=True)
+    url = page.url
+    print(f"[CAPTCHA] URL: {{url}}", flush=True)
+
+    # Автоопределение site_key
+    if not site_key:
+        print("[CAPTCHA] 🔍 Searching for site_key...", flush=True)
+        try:
+            site_key = page.evaluate('''() => {{
+                const el = document.querySelector('[data-sitekey]');
+                return el ? el.getAttribute('data-sitekey') : null;
+            }}''')
+            print(f"[CAPTCHA] site_key from page.evaluate: {{site_key}}", flush=True)
+        except Exception as e:
+            print(f"[CAPTCHA] ⚠️ Error getting site_key: {{e}}", flush=True)
+
+    if not site_key:
+        print("[CAPTCHA] ❌ reCAPTCHA site_key not found", flush=True)
+        return None
+
+    print(f"[CAPTCHA] 🔄 Solving reCAPTCHA v2... sitekey={{site_key[:20]}}...", flush=True)
+
+    task = {{
+        'type': 'ReCaptchaV2TaskProxyLess',
+        'websiteURL': url,
+        'websiteKey': site_key
+    }}
+
+    task_id = _capsolver_create_task(task)
+    if not task_id:
+        return None
+
+    solution = _capsolver_get_result(task_id, timeout)
+    if solution:
+        token = solution.get('gRecaptchaResponse')
+        if token:
+            # Инжектим токен в страницу
+            try:
+                page.evaluate(f'''(token) => {{{{
+                    const textarea = document.querySelector('[name="g-recaptcha-response"]');
+                    if (textarea) textarea.value = token;
+                    // Вызываем callback если есть
+                    if (typeof ___grecaptcha_cfg !== 'undefined') {{{{
+                        Object.keys(___grecaptcha_cfg.clients).forEach(key => {{{{
+                            const client = ___grecaptcha_cfg.clients[key];
+                            if (client.callback) client.callback(token);
+                        }}}});
+                    }}}}
+                }}}}''', token)
+                print(f"[CAPTCHA] ✅ reCAPTCHA v2 solved!", flush=True)
+            except Exception as e:
+                print(f"[CAPTCHA] ⚠️ Token inject error: {{e}}", flush=True)
+
+            # 🖱️ Клик по чекбоксу для визуального подтверждения
+            if CAPSOLVER_CLICK_CHECKBOX:
+                try:
+                    print("[CAPTCHA] 🖱️ Clicking checkbox visually...", flush=True)
+                    # reCAPTCHA чекбокс находится в iframe - берём первый
+                    recaptcha_frame = page.frame_locator('iframe[src*="recaptcha"][src*="anchor"]').first
+                    checkbox = recaptcha_frame.locator('.recaptcha-checkbox-border, #recaptcha-anchor')
+                    checkbox.click(timeout=3000)
+                    page.wait_for_timeout(500)
+                    print("[CAPTCHA] ✅ Checkbox clicked!", flush=True)
+                except Exception as e:
+                    # Альтернативный способ - клик по div.g-recaptcha
+                    try:
+                        div_recaptcha = page.locator('div.g-recaptcha').first
+                        div_recaptcha.click(timeout=3000)
+                        print("[CAPTCHA] ✅ Clicked on g-recaptcha div", flush=True)
+                    except:
+                        print(f"[CAPTCHA] ⚠️ Checkbox click error (not critical): {{e}}", flush=True)
+
+            return token
+
+    print("[CAPTCHA] ❌ reCAPTCHA v2 solving failed", flush=True)
+    return None
+
+def solve_recaptcha_v3(page, site_key: str = None, action: str = '', timeout: int = CAPSOLVER_TIMEOUT) -> str:
+    '''Решить reCAPTCHA v3'''
+    print("[CAPTCHA] ▶️ solve_recaptcha_v3() called", flush=True)
+    url = page.url
+
+    if not site_key:
+        try:
+            site_key = page.evaluate('''() => {{
+                const scripts = document.querySelectorAll('script[src*="recaptcha"]');
+                for (const s of scripts) {{
+                    const match = s.src.match(/render=([^&]+)/);
+                    if (match) return match[1];
+                }}
+                return null;
+            }}''')
+        except:
+            pass
+
+    if not site_key:
+        print("[CAPTCHA] ❌ reCAPTCHA v3 site_key not found", flush=True)
+        return None
+
+    print(f"[CAPTCHA] 🔄 Solving reCAPTCHA v3...", flush=True)
+
+    task = {{
+        'type': 'ReCaptchaV3TaskProxyLess',
+        'websiteURL': url,
+        'websiteKey': site_key,
+        'pageAction': action,
+        'minScore': CAPSOLVER_MIN_SCORE
+    }}
+
+    task_id = _capsolver_create_task(task)
+    if not task_id:
+        return None
+
+    solution = _capsolver_get_result(task_id, timeout)
+    if solution:
+        token = solution.get('gRecaptchaResponse')
+        if token:
+            print(f"[CAPTCHA] ✅ reCAPTCHA v3 solved!", flush=True)
+            return token
+
+    return None
+
+def solve_hcaptcha(page, site_key: str = None, timeout: int = CAPSOLVER_TIMEOUT) -> str:
+    '''Решить hCaptcha'''
+    print("[CAPTCHA] ▶️ solve_hcaptcha() called", flush=True)
+    url = page.url
+
+    if not site_key:
+        try:
+            site_key = page.evaluate('''() => {{
+                const el = document.querySelector('[data-sitekey]');
+                return el ? el.getAttribute('data-sitekey') : null;
+            }}''')
+        except:
+            pass
+
+    if not site_key:
+        print("[CAPTCHA] ❌ hCaptcha site_key not found", flush=True)
+        return None
+
+    print(f"[CAPTCHA] 🔄 Solving hCaptcha...", flush=True)
+
+    task = {{
+        'type': 'HCaptchaTaskProxyLess',
+        'websiteURL': url,
+        'websiteKey': site_key
+    }}
+
+    task_id = _capsolver_create_task(task)
+    if not task_id:
+        return None
+
+    solution = _capsolver_get_result(task_id, timeout)
+    if solution:
+        token = solution.get('gRecaptchaResponse')
+        if token:
+            try:
+                page.evaluate(f'''(token) => {{{{
+                    const h = document.querySelector('[name="h-captcha-response"]');
+                    const g = document.querySelector('[name="g-recaptcha-response"]');
+                    if (h) h.value = token;
+                    if (g) g.value = token;
+                }}}}''', token)
+                print(f"[CAPTCHA] ✅ hCaptcha solved!", flush=True)
+            except Exception as e:
+                print(f"[CAPTCHA] ⚠️ Token inject error: {{e}}", flush=True)
+
+            # 🖱️ Клик по чекбоксу для визуального подтверждения
+            if CAPSOLVER_CLICK_CHECKBOX:
+                try:
+                    print("[CAPTCHA] 🖱️ Clicking hCaptcha checkbox...", flush=True)
+                    # hCaptcha чекбокс в iframe - берём первый
+                    hcaptcha_frame = page.frame_locator('iframe[src*="hcaptcha"]').first
+                    checkbox = hcaptcha_frame.locator('#checkbox')
+                    checkbox.click(timeout=3000)
+                    page.wait_for_timeout(500)
+                    print("[CAPTCHA] ✅ hCaptcha checkbox clicked!", flush=True)
+                except Exception as e:
+                    print(f"[CAPTCHA] ⚠️ hCaptcha click error (not critical): {{e}}", flush=True)
+
+            return token
+
+    return None
+
+def solve_turnstile(page, site_key: str = None, timeout: int = CAPSOLVER_TIMEOUT) -> str:
+    '''Решить Cloudflare Turnstile'''
+    print("[CAPTCHA] ▶️ solve_turnstile() called", flush=True)
+    url = page.url
+
+    if not site_key:
+        try:
+            site_key = page.evaluate('''() => {{
+                const el = document.querySelector('[data-sitekey]');
+                return el ? el.getAttribute('data-sitekey') : null;
+            }}''')
+        except:
+            pass
+
+    if not site_key:
+        print("[CAPTCHA] ❌ Turnstile site_key not found", flush=True)
+        return None
+
+    print(f"[CAPTCHA] 🔄 Solving Cloudflare Turnstile...", flush=True)
+
+    task = {{
+        'type': 'AntiTurnstileTaskProxyLess',
+        'websiteURL': url,
+        'websiteKey': site_key
+    }}
+
+    task_id = _capsolver_create_task(task)
+    if not task_id:
+        return None
+
+    solution = _capsolver_get_result(task_id, timeout)
+    if solution:
+        token = solution.get('token')
+        if token:
+            try:
+                page.evaluate(f'''(token) => {{{{
+                    const input = document.querySelector('[name="cf-turnstile-response"]');
+                    if (input) input.value = token;
+                }}}}''', token)
+                print(f"[CAPTCHA] ✅ Turnstile solved!", flush=True)
+            except Exception as e:
+                print(f"[CAPTCHA] ⚠️ Token inject error: {{e}}", flush=True)
+
+            # 🖱️ Клик по Turnstile widget для визуального подтверждения
+            if CAPSOLVER_CLICK_CHECKBOX:
+                try:
+                    print("[CAPTCHA] 🖱️ Clicking Turnstile widget...", flush=True)
+                    # Turnstile в iframe - берём первый
+                    turnstile_frame = page.frame_locator('iframe[src*="turnstile"]').first
+                    checkbox = turnstile_frame.locator('input[type="checkbox"]')
+                    checkbox.click(timeout=3000)
+                    page.wait_for_timeout(500)
+                    print("[CAPTCHA] ✅ Turnstile clicked!", flush=True)
+                except Exception as e:
+                    # Попробуем кликнуть по div с turnstile
+                    try:
+                        turnstile_div = page.locator('.cf-turnstile').first
+                        turnstile_div.click(timeout=3000)
+                        print("[CAPTCHA] ✅ Turnstile div clicked!", flush=True)
+                    except:
+                        print(f"[CAPTCHA] ⚠️ Turnstile click error (not critical): {{e}}", flush=True)
+
+            return token
+
+    return None
+
+def solve_image_captcha(image_base64: str, module: str = 'common') -> str:
+    '''
+    Решить картинку с текстом
+
+    Args:
+        image_base64: Base64-encoded изображение
+        module: Модуль распознавания ('common', 'queueit', etc.)
+
+    Returns:
+        Распознанный текст или None
+    '''
+    print(f"[CAPTCHA] 🔄 Solving image captcha...", flush=True)
+
+    task = {{
+        'type': 'ImageToTextTask',
+        'body': image_base64,
+        'module': module
+    }}
+
+    task_id = _capsolver_create_task(task)
+    if not task_id:
+        return None
+
+    solution = _capsolver_get_result(task_id, 60)
+    if solution:
+        text = solution.get('text')
+        if text:
+            print(f"[CAPTCHA] ✅ Image solved: {{text}}", flush=True)
+            return text
+
+    return None
+
+def has_captcha(page) -> str:
+    '''
+    Проверить наличие капчи на странице
+
+    Returns:
+        Тип капчи ('recaptcha_v2', 'hcaptcha', 'turnstile') или None
+    '''
+    print("[CAPTCHA] 🔍 Checking for captcha on page...", flush=True)
+    try:
+        html = page.content()
+        print(f"[CAPTCHA] Page content length: {{len(html)}} chars", flush=True)
+
+        # Проверяем различные паттерны
+        if 'g-recaptcha' in html or 'grecaptcha' in html or 'recaptcha' in html.lower():
+            print("[CAPTCHA] ✓ Found reCAPTCHA pattern", flush=True)
+            return 'recaptcha_v2'
+        if 'h-captcha' in html or 'hcaptcha' in html:
+            print("[CAPTCHA] ✓ Found hCaptcha pattern", flush=True)
+            return 'hcaptcha'
+        if 'cf-turnstile' in html or 'turnstile' in html:
+            print("[CAPTCHA] ✓ Found Turnstile pattern", flush=True)
+            return 'turnstile'
+
+        print("[CAPTCHA] ✗ No captcha patterns found in HTML", flush=True)
+    except Exception as e:
+        print(f"[CAPTCHA] ❌ Error checking page: {{e}}", flush=True)
+
+    return None
+
+def solve_captcha(page, captcha_type: str = 'auto', timeout: int = CAPSOLVER_TIMEOUT) -> str:
+    '''
+    Универсальная функция решения капчи
+
+    Args:
+        page: Playwright page object
+        captcha_type: 'auto', 'recaptcha_v2', 'recaptcha_v3', 'hcaptcha', 'turnstile'
+        timeout: Таймаут решения
+
+    Returns:
+        Токен решения или None
+    '''
+    if captcha_type == 'auto':
+        captcha_type = has_captcha(page)
+        if not captcha_type:
+            print("[CAPTCHA] ℹ️ No captcha detected on page", flush=True)
+            return None
+
+    print(f"[CAPTCHA] 🔓 Detected: {{captcha_type}}", flush=True)
+
+    if captcha_type == 'recaptcha_v2':
+        return solve_recaptcha_v2(page, timeout=timeout)
+    elif captcha_type == 'recaptcha_v3':
+        return solve_recaptcha_v3(page, timeout=timeout)
+    elif captcha_type == 'hcaptcha':
+        return solve_hcaptcha(page, timeout=timeout)
+    elif captcha_type == 'turnstile':
+        return solve_turnstile(page, timeout=timeout)
+
+    return None
+
+"""
+
+    def _generate_local_chromium_worker_function(self) -> str:
+        """Генерирует worker функцию для Local Chromium режима"""
+        return '''# ============================================================
+# WORKER FUNCTION - LOCAL CHROMIUM MODE
+# ============================================================
+
+def process_task(task_data: tuple) -> Dict:
+    """Обработать одну задачу в отдельном потоке (Local Chromium)"""
+    thread_id, iteration_number, data_row, total_count, csv_file_path, fieldnames = task_data
+
+    # Получаем индекс строки в CSV (0-based, не считая заголовок)
+    csv_row_index = data_row.get('__csv_row_index__', 0)
+    display_row_number = csv_row_index + 1  # Для отображения (1-based)
+
+    print(f"\\n{'#'*60}")
+    print(f"# THREAD {thread_id} | ITERATION {iteration_number}/{total_count} | CSV ROW {display_row_number}")
+    print(f"# 🔥 LOCAL CHROMIUM MODE (Headless: {HEADLESS})")
+    print(f"{'#'*60}")
+
+    # Помечаем строку как взятую в работу
+    mark_row_in_progress(csv_file_path, csv_row_index, fieldnames)
+
+    # Задержка для разнесения запусков
+    startup_delay = (thread_id - 1) * 2  # 0s, 2s, 4s...
+    if startup_delay > 0:
+        print(f"[THREAD {thread_id}] Задержка запуска: {startup_delay}s")
+        time.sleep(startup_delay)
+
+    # ========================================
+    # Объявляем ВСЕ переменные ДО try
+    # ========================================
+    browser = None
+    context = None
+    page = None
+    playwright_instance = None
+
+    result = {
+        'thread_id': thread_id,
+        'iteration': iteration_number,
+        'csv_row': display_row_number,
+        'success': False,
+        'error': None
+    }
+
+    try:
+        # 🔥 Получаем прокси для Playwright (если настроен)
+        playwright_proxy = get_proxy_for_playwright(thread_id, iteration_number)
+        proxy_string = playwright_proxy.get('server', '') if playwright_proxy else ''
+
+        if playwright_proxy:
+            print(f"[THREAD {thread_id}] Используем прокси: {playwright_proxy['server']}")
+        else:
+            print(f"[THREAD {thread_id}] Прокси не настроен, запуск напрямую")
+
+        # ========================================
+        # 🔥 ANTIDETECT: Генерируем fingerprint если включен
+        # ========================================
+        fingerprint = None
+        if 'ANTIDETECT_ENABLED' in dir() and ANTIDETECT_ENABLED:
+            # Определяем страну
+            if ANTIDETECT_COUNTRY == 'auto' and proxy_string:
+                country_code = detect_country_from_proxy(proxy_string)
+            else:
+                country_code = ANTIDETECT_COUNTRY if ANTIDETECT_COUNTRY != 'auto' else 'US'
+
+            fingerprint = generate_fingerprint_for_country(country_code, proxy_string)
+            print(f"[THREAD {thread_id}] [ANTIDETECT] 🛡️ Fingerprint: {fingerprint.get('country')} / {fingerprint.get('city')} / {fingerprint.get('timezone')}")
+
+        # ========================================
+        # 🔥 Запуск ЛОКАЛЬНОГО Chromium через Playwright
+        # ========================================
+        print(f"[THREAD {thread_id}] Запуск локального Chromium...")
+        playwright_instance = sync_playwright().start()
+
+        # Аргументы для браузера (с учетом antidetect)
+        if fingerprint:
+            browser_args = get_antidetect_launch_args(fingerprint)
+        else:
+            browser_args = [
+                '--disable-blink-features=AutomationControlled',
+                '--disable-infobars',
+                '--no-first-run',
+                '--no-default-browser-check',
+            ]
+
+        browser = playwright_instance.chromium.launch(
+            headless=HEADLESS,
+            args=browser_args
+        )
+
+        # Создаем контекст (с учетом antidetect fingerprint)
+        if fingerprint:
+            context_options = get_antidetect_context_options(fingerprint)
+        else:
+            context_options = {
+                'viewport': {'width': 1920, 'height': 1080},
+                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
+
+        if playwright_proxy:
+            context_options['proxy'] = playwright_proxy
+
+        context = browser.new_context(**context_options)
+        page = context.new_page()
+
+        # 🔥 Применяем stealth скрипт к странице
+        if fingerprint:
+            apply_stealth_to_page(page, fingerprint)
+
+        page.set_default_timeout(DEFAULT_TIMEOUT)
+        page.set_default_navigation_timeout(NAVIGATION_TIMEOUT)
+
+        print(f"[THREAD {thread_id}] [OK] Браузер запущен успешно")
+
+        # run_iteration возвращает tuple (success, extracted_fields)
+        iteration_success, extracted_fields = run_iteration(page, data_row, iteration_number)
+
+        if iteration_success:
+            result['success'] = True
+        else:
+            result['error'] = "Iteration failed"
+
+        time.sleep(2)
+
+        # 🔥 Ротация 9Proxy после завершения итерации
+        if NINE_PROXY_ENABLED and NINE_PROXY_PORTS:
+            if NINE_PROXY_AUTO_ROTATE:
+                nine_proxy_dict = get_nine_proxy_for_thread(thread_id)
+                if nine_proxy_dict:
+                    port = int(nine_proxy_dict['port'])
+                    print(f"[9PROXY ROTATION] Rotating port {port}")
+                    rotate_proxy_for_port(port)
+
+        # Итоги обработки
+        if result['success']:
+            print(f"[ITERATION {iteration_number}] [OK] Завершено успешно")
+        else:
+            print(f"[ITERATION {iteration_number}] [FAIL] Завершено с ошибкой: {result.get('error', 'Unknown error')}")
+
+    except Exception as e:
+        print(f"[THREAD {thread_id}] [ERROR] Критическая ошибка: {e}")
+        import traceback
+        traceback.print_exc()
+        result['error'] = str(e)
+
+    finally:
+        # ========================================================
+        # ЗАКРЫТИЕ РЕСУРСОВ
+        # ========================================================
+
+        # 1. Закрыть контекст
+        if context:
+            try:
+                context.close()
+            except:
+                pass
+
+        # 2. Закрыть браузер
+        if browser:
+            try:
+                browser.close()
+                print(f"[THREAD {thread_id}] [OK] Браузер закрыт")
+            except:
+                pass
+
+        # 3. Остановить Playwright instance
+        if playwright_instance:
+            try:
+                playwright_instance.stop()
+            except:
+                pass
+
+        # 4. Закрыть прокси-туннель если был создан
+        if playwright_proxy and 'tunnel_port' in playwright_proxy:
+            close_tunnel(playwright_proxy['tunnel_port'])
+
+    return result
+
+'''
+
+    def _generate_local_chromium_main_function(self) -> str:
+        """Генерирует main функцию для Local Chromium режима"""
+        return '''# ============================================================
+# ГЛАВНАЯ ФУНКЦИЯ - LOCAL CHROMIUM MODE
+# ============================================================
+
+def main():
+    """Главная функция запуска (Local Chromium)"""
+    print("="*60)
+    print("🔥 LOCAL CHROMIUM MODE - Чистый Playwright")
+    print(f"   Headless: {HEADLESS}")
+    print(f"   Потоков: {THREADS_COUNT}")
+    print("="*60)
+
+    # 🔥 Инициализация портов 9Proxy перед началом работы
+    if NINE_PROXY_ENABLED and NINE_PROXY_PORTS:
+        print("\\n" + "="*60)
+        if not initialize_nine_proxy_ports():
+            print("[MAIN] [WARNING] Не удалось инициализировать 9Proxy, продолжаем без него...")
+        print("="*60 + "\\n")
+
+    # Загружаем CSV и получаем отфильтрованные данные
+    csv_file_path, fieldnames, csv_data = load_csv_data()
+
+    if not csv_file_path or not fieldnames:
+        print("[ERROR] Не удалось загрузить CSV файл")
+        return
+
+    print(f"[MAIN] CSV файл: {csv_file_path}")
+    print(f"[MAIN] К обработке: {len(csv_data)} новых строк")
+
+    if not csv_data:
+        print("[MAIN] Нет новых данных для обработки (все строки уже обработаны)")
+        return
+
+    # ПРИМЕНЯЕМ ЛИМИТ ИТЕРАЦИЙ
+    if MAX_ITERATIONS is not None and MAX_ITERATIONS > 0:
+        original_count = len(csv_data)
+        csv_data = csv_data[:MAX_ITERATIONS]
+        print(f"[MAIN] Лимит итераций: {MAX_ITERATIONS}")
+        print(f"[MAIN] Обрабатываем: {len(csv_data)} из {original_count} строк")
+    else:
+        print(f"[MAIN] Лимит итераций: НЕТ (обрабатываем все строки)")
+
+    # Формируем задачи
+    tasks = []
+    for iteration_number, data_row in enumerate(csv_data, 1):
+        thread_id = (iteration_number - 1) % THREADS_COUNT + 1
+        task_data = (thread_id, iteration_number, data_row, len(csv_data), csv_file_path, fieldnames)
+        tasks.append(task_data)
+
+    actual_threads = min(THREADS_COUNT, len(csv_data))
+    print(f"\\n[MAIN] Запуск {len(tasks)} задач в {actual_threads} потоках...")
+
+    success_count = 0
+    fail_count = 0
+
+    with ThreadPoolExecutor(max_workers=actual_threads) as executor:
+        future_to_task = {executor.submit(process_task, task): task for task in tasks}
+
+        for future in as_completed(future_to_task):
+            try:
+                result = future.result()
+
+                if result['success']:
+                    success_count += 1
+                    print(f"[MAIN] [OK] Итерация {result['iteration']} (CSV строка {result['csv_row']}) завершена успешно")
+                else:
+                    fail_count += 1
+                    print(f"[MAIN] [ERROR] Итерация {result['iteration']} (CSV строка {result['csv_row']}) завершена с ошибкой")
+
+            except Exception as e:
+                fail_count += 1
+                print(f"[MAIN] [ERROR] Ошибка: {e}")
+
+    print(f"\\n{'='*60}")
+    print(f"[MAIN] ЗАВЕРШЕНО")
+    print(f"[MAIN] Успешно: {success_count}/{len(csv_data)}")
+    print(f"[MAIN] Ошибок: {fail_count}/{len(csv_data)}")
+    print(f"{'='*60}")
+
+
+if __name__ == "__main__":
+    main()
+'''
 
